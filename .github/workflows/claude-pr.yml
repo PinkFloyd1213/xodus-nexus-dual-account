@@ -1,0 +1,88 @@
+# Claude reviews every same-repo PR into dual-account, fixes what is broken
+# and pushes to the PR branch. It never merges. Needs the Claude GitHub App and
+# the CLAUDE_CODE_OAUTH_TOKEN secret (see docs/AUTOMATION.md).
+name: Claude PR check
+
+on:
+  pull_request:
+    branches: [dual-account]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+concurrency:
+  group: claude-pr-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork PRs get no secrets; Claude's own pushes must not re-run it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'claude[bot]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Resolve the PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Read pinned Rust version
+        run: echo "BACKEND_RUST=$(node -p 'require("./assets/backend-source.lock.json").rust')" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.BACKEND_RUST }}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 pkg-config libssl-dev protobuf-compiler libdbus-1-dev
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          prompt: |
+            You maintain the "dual-account" fork of Xodus Nexus. Read docs/DUAL_ACCOUNT.md first.
+            Pull request #${{ steps.pr.outputs.number }}: branch ${{ steps.pr.outputs.head }} into dual-account.
+
+            1. Merge origin/dual-account into this branch if it does not merge cleanly, and resolve conflicts.
+               Keep every dual-account change (play/store accounts, sourceOnly backend, LAUNCHER_REPOSITORY,
+               lock repository https://github.com/PinkFloyd1213/xodus-dual-account.git, xodus-dual-account.patch
+               kept LAST in assets/backend-source.lock.json with patchId suffix -dual-account-N) together with
+               the upstream changes.
+            2. If the backend lock changed (commit, cargoLockSha256 or patch list), check that every patch still
+               applies on the pinned commit: clone the lock repository into /tmp, checkout the commit, then
+               `git apply --check` each patch in order. If xodus-dual-account.patch no longer applies, regenerate it:
+               clone https://github.com/PinkFloyd1213/xodus-dual-account.git into /tmp/xodus (it has branches
+               nexus-base and dual-account), add the remote `upstream` https://github.com/xodus-gaming/xodus.git,
+               then from /tmp/xodus run `scripts/nexus-base.sh <this checkout> nexus-base-next`, rebase the dual-account commits onto it
+               (`git rebase --onto nexus-base-next nexus-base dual-account`), run `scripts/dual-account-patch.sh`,
+               copy the patch into assets/, update its sha256 and bump the -dual-account-N patchId suffix.
+               Then build: `cargo build --locked --release --no-default-features -p xodus-cli -p xodus-service`
+               and `cargo test --locked --no-default-features -p xodus credential_` in that backend checkout.
+            3. Run `npm ci`, `npm run typecheck`, `npx vitest run`. Fix real failures in the source. Do not weaken
+               or delete tests unless one is clearly wrong; explain why.
+            4. Commit with clear messages and push to this branch with `git push origin HEAD`. Never merge, never
+               force-push, never touch secrets or tokens, never print account data.
+            Finish with a short summary in French for the owner: what changed upstream, what you fixed, what is
+            left for a human, and whether it looks safe to merge.
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(scripts/nexus-base.sh *),Bash(scripts/dual-account-patch.sh *),Bash(cargo build *),Bash(cargo test *),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *)"

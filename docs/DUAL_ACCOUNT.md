@@ -96,6 +96,14 @@ Tout est additif et s'active seulement si le lock contient
 Pour un merge upstream, il faudrait retirer `launcher-update.ts` et rendre
 `sourceOnly` inutile en publiant un backend précompilé qui contient le patch.
 
+## Correctif hors double compte
+
+L'édition corrige aussi un bug de Nexus d'origine : « Last played » était
+toujours indisponible, avec le message « Some Xbox activity could not be
+retrieved ». Pour le proposer un jour à upstream, voir
+[`docs/upstream/ACTIVITY_FIX.md`](upstream/ACTIVITY_FIX.md) : patch autonome,
+procédure et texte prêt à publier. Rien n'a été envoyé.
+
 ## Maintenance (suivre upstream)
 
 Dans `xodus-backend` (fork Xodus) :

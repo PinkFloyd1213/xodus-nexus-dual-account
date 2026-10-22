@@ -973,6 +973,7 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
   const [installRoot, setInstallRoot] = useState(data.settings.installRoot);
   const [saving, setSaving] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [building, setBuilding] = useState(false);
 
   async function browse() {
     try {
@@ -985,6 +986,12 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
     try { await window.launcher.login(); }
     catch (error) { toast({ kind: 'error', message: errorMessage(error) }); }
     finally { setSigningIn(false); }
+  }
+  async function buildBackend() {
+    setBuilding(true);
+    try { await window.launcher.rebuildBackend(); toast({ kind: 'success', message: 'The dual-account backend was built and activated.' }); }
+    catch (error) { toast({ kind: 'error', message: errorMessage(error) }); }
+    finally { setBuilding(false); }
   }
   async function finish() {
     setSaving(true);
@@ -1013,6 +1020,7 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
       <KeyringSetup compact disabled={signingIn || data.auth.running} />
       <div className="wizard-account">
         <div><strong>Microsoft account</strong><small>{data.backend.available ? (data.auth.stored === true ? `Signed in as ${data.auth.username ?? 'stored account'}` : data.auth.stored === false ? 'Not signed in yet — Store browsing works without an account' : 'Account status is still being checked') : backendSetupHint(data.backend)}</small></div>
+        {data.backend.dualAccountBuild && !data.backend.available ? <button className="secondary" disabled={building || data.backend.updating} onClick={() => void buildBackend()}>{building || data.backend.updating ? <LoaderCircle className="spin" /> : <Github />}Use dual-account backend</button> : null}
         <button className="secondary" disabled={!data.backend.capabilities.login || signingIn || data.auth.running} onClick={() => void signIn()}>{signingIn ? <LoaderCircle className="spin" /> : <LogIn />}{data.auth.stored ? 'Sign in again' : 'Sign in'}</button>
       </div>
       <div className="wizard-actions">

@@ -448,6 +448,7 @@ button.primary svg, button.secondary svg { width: 17px; height: 17px; }
 .wizard-field small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); }
 .wizard-account { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
 .wizard-account small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.wizard-account > button { flex: none; white-space: nowrap; }
 .wizard { max-height: 94vh; overflow-y: auto; }
 .wizard-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wizard-actions > span { color: var(--faint); font-size: 9px; max-width: 250px; }

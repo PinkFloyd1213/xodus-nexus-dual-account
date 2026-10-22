@@ -1,9 +1,9 @@
 import { spawnTracked, type RunResult } from './process.js';
 
 /** Read-only account status, never an interactive sign-in or token renewal. */
-export async function readAccount(binary: string, signal: AbortSignal): Promise<RunResult> {
+export async function readAccount(binary: string, signal: AbortSignal, args: string[] = []): Promise<RunResult> {
   signal.throwIfAborted();
-  const tracked = spawnTracked(binary, ['account', '--json'], { maxOutput: 20_000, stdoutOnly: true });
+  const tracked = spawnTracked(binary, ['account', '--json', ...args], { maxOutput: 20_000, stdoutOnly: true });
   const stop = () => { tracked.child.kill('SIGKILL'); };
   signal.addEventListener('abort', stop, { once: true });
   if (signal.aborted) stop();

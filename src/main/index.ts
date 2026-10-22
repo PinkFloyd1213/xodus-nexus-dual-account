@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { AppSnapshot, AuthStatus, DownloadTask, Game, GameLaunchOptions, GameOperation, GameUpdate, InstallRequest, Settings } from '../shared/types.js';
+import type { AppSnapshot, AuthStatus, DownloadTask, PlayAccountStatus, Game, GameLaunchOptions, GameOperation, GameUpdate, InstallRequest, Settings } from '../shared/types.js';
 import { downloadFailure, safeProductId } from '../shared/utils.js';
 import { downloadLimitArgs, downloadLimitKiB } from '../shared/download-bandwidth.js';
 import { DownloadBandwidthControls, isBandwidthOnlyPatch } from './download-bandwidth.js';
@@ -297,7 +297,7 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
   const status = backend.current;
   const key = accountRefreshKey();
   await accountRefresh.run(key, async signal => {
-    let next: Pick<AuthStatus, 'stored' | 'username' | 'note'>;
+    let next: Pick<AuthStatus, 'stored' | 'username' | 'note' | 'play'>;
     if (!status.available || !status.binaryPath) {
       next = { stored: null, username: undefined, note: 'Account status is unavailable because the Xodus backend is offline.' };
     } else if (!status.capabilities.account) {
@@ -334,20 +334,48 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
         }
       }
     }
+    next.play = status.capabilities.dualAccount && status.binaryPath && next.stored !== null
+      ? await readPlayAccount(status.binaryPath, signal) : undefined;
     return next;
   }, async next => {
     authState = { ...authState, ...next };
     accountLibrary.select(authState.stored === true ? authState.username : undefined,
       status.capabilities.library ? status.binaryPath : undefined, currentMarket());
-    gameActivities.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.gameActivity ? status.binaryPath : undefined);
-    gameAchievements.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.achievements ? status.binaryPath : undefined);
-    await accountProfile?.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.profile ? status.binaryPath : undefined, emit);
+    // Xbox data (gamertag, achievements, play time) follows the in-game account.
+    const xbox = xboxIdentity();
+    gameActivities.select(xbox?.account, status.capabilities.gameActivity ? status.binaryPath : undefined, xbox?.play);
+    gameAchievements.select(xbox?.account, status.capabilities.achievements ? status.binaryPath : undefined, xbox?.play);
+    await accountProfile?.select(xbox?.account, status.capabilities.profile ? status.binaryPath : undefined, emit, xbox?.play);
   }, () => key === accountRefreshKey() && (!authState.running || afterAuth));
   if (emit) emitSnapshot();
   return structuredClone(authState);
+}
+
+/** `account --account play`: the account games run as, never a sign-in. */
+async function readPlayAccount(binary: string, signal: AbortSignal): Promise<PlayAccountStatus> {
+  const result = await readAccount(binary, signal, ['--account', 'play']).catch(() => ({ code: -1, output: '' }));
+  try {
+    if (result.code !== 0) throw Error('play account unavailable');
+    const line = result.output.split('\n').map(entry => entry.trim()).reverse().find(entry => entry.startsWith('{'));
+    const value = JSON.parse(line ?? '') as { stored?: unknown; username?: unknown; fallback?: unknown };
+    if (typeof value.fallback !== 'boolean') throw Error('unexpected play account response');
+    if (value.stored === true && typeof value.username === 'string' && value.username.trim()) {
+      return { stored: true, username: value.username.trim(), fallback: value.fallback };
+    }
+    if (value.stored === false) return { stored: false, fallback: value.fallback };
+    throw Error('unexpected play account response');
+  } catch { return { stored: null, fallback: true }; }
+}
+
+/** Xbox identity shown like the Xbox app: the in-game account on dual-account
+ * backends (which falls back to the license account), otherwise the account. */
+function xboxIdentity(): { account: string; play: boolean } | undefined {
+  if (authState.running) return undefined;
+  if (backend.current.capabilities.dualAccount && authState.play?.stored === true && authState.play.username) {
+    return { account: authState.play.username, play: true };
+  }
+  if (authState.stored === true && authState.username) return { account: authState.username, play: false };
+  return undefined;
 }
 
 async function refreshInitialAccount(): Promise<void> {
@@ -395,9 +423,11 @@ async function prepareSystemWallet(): Promise<void> {
   if (directShortcut) mainWindow?.hide();
 }
 
-async function runAuth(command: 'login' | 'logout'): Promise<void> {
+async function runAuth(command: 'login' | 'logout', play = false): Promise<void> {
   ensureIdle();
   const binary = requireBackend(command);
+  if (play && !backend.current.capabilities.dualAccount) throw Error('Use the dual-account backend in Settings to add an Xbox account.');
+  const roleArgs = play ? ['--account', 'play'] : [];
   const id = `auth-${randomUUID()}`;
   accountRefresh.invalidate();
   accountLibrary.reset();
@@ -414,8 +444,8 @@ async function runAuth(command: 'login' | 'logout'): Promise<void> {
     if (shutdownStarted) throw Error('The launcher is closing.');
     await accountProfile.select(undefined);
     if (shutdownStarted) throw Error('The launcher is closing.');
-    const tracked = command === 'login' ? startAuthTransport(binary, view)
-      : spawnTracked(binary, [command], { onLine: (line) => emitLog('auth', line) });
+    const tracked = command === 'login' ? startAuthTransport(binary, view, undefined, undefined, roleArgs)
+      : spawnTracked(binary, [command, ...roleArgs], { onLine: (line) => emitLog('auth', line) });
     operations.set(id, tracked.child);
     const result = await tracked.result;
     accountRefresh.invalidate();
@@ -434,9 +464,9 @@ async function runAuth(command: 'login' | 'logout'): Promise<void> {
   }
 }
 
-function requestAuth(command: 'login' | 'logout'): Promise<void> {
+function requestAuth(command: 'login' | 'logout', play = false): Promise<void> {
   if (authJob) return Promise.reject(Error('A sign-in operation is already in progress.'));
-  const job = runAuth(command); authJob = job;
+  const job = runAuth(command, play); authJob = job;
   const clear = () => { if (authJob === job) authJob = undefined; };
   void job.then(clear, clear); return job;
 }
@@ -1146,6 +1176,9 @@ function registerDemoIpc(catalogMarket: () => string): void {
   ipcMain.handle('read-backend-diagnostic-log', () => ({ name: 'backend.log', content: 'Sample backend diagnostics. No account data.', truncated: false }));
   ipcMain.handle('login', () => {});
   ipcMain.handle('logout', () => {});
+  ipcMain.handle('login-play', () => {});
+  ipcMain.handle('logout-play', () => {});
+  ipcMain.handle('backend-restore-previous', () => {});
   ipcMain.handle('catalog-search', (_event, query: string, cursor?: string) => catalog.search(query, catalogMarket(), cursor));
   ipcMain.handle('catalog-featured', () => catalog.featured(catalogMarket()));
   ipcMain.handle('account-library', (_event, kind: 'all' | 'owned' | 'gamepass') => demoAccountLibrary(kind, demoArtwork));
@@ -1194,6 +1227,7 @@ function registerIpc(): void {
   ipcMain.handle('backend-check-update', async () => { const value = await backend.checkUpdate(); emitSnapshot(); return value; });
   ipcMain.handle('backend-update', async () => { await backend.update(emitSnapshot); await refreshAccount(); });
   ipcMain.handle('backend-rebuild', async () => { await backend.rebuild(emitSnapshot); await refreshAccount(); });
+  ipcMain.handle('backend-restore-previous', async () => { await backend.restorePrevious(emitSnapshot); await refreshAccount(); });
   ipcMain.handle('runtime-refresh', async () => { const value = await runtime.refresh(); await syncManagedWinePath(); await refreshAccount(false); emitSnapshot(); return value; });
   ipcMain.handle('runtime-check-update', async () => { const value = await runtime.check(); emitSnapshot(); return value; });
   ipcMain.handle('runtime-check-nexus', async () => { const value = await runtime.checkNexus(); emitSnapshot(); return value; });
@@ -1268,6 +1302,8 @@ function registerIpc(): void {
   });
   ipcMain.handle('login', () => requestAuth('login'));
   ipcMain.handle('logout', () => requestAuth('logout'));
+  ipcMain.handle('login-play', () => requestAuth('login', true));
+  ipcMain.handle('logout-play', () => requestAuth('logout', true));
   ipcMain.handle('catalog-search', (_event, query: string, cursor?: string) => {
     return catalog.search(query, catalogMarket(), cursor);
   });
@@ -1389,30 +1425,32 @@ function registerIpc(): void {
     if (typeof id !== 'string' || typeof refresh !== 'boolean') throw Error('Invalid activity request.');
     const game = store.games.find(game => game.id === id);
     if (!game) throw Error('Game not found.');
-    if (authState.running || authState.stored !== true || !authState.username) return { status: 'signed-out' };
+    const xbox = xboxIdentity();
+    if (!xbox) return { status: 'signed-out' };
     if (!backend.current.capabilities.gameActivity || !backend.current.binaryPath) return { status: 'unsupported' };
-    const account = authState.username, binary = backend.current.binaryPath;
-    gameActivities.select(account, binary);
+    const account = xbox.account, binary = backend.current.binaryPath;
+    gameActivities.select(account, binary, xbox.play);
     const title = await installedTitleId(game.path).catch(() => undefined);
     if (!title) return { status: 'unavailable' };
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     const activity = await gameActivities.get(title, refresh);
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     return activity;
   });
   ipcMain.handle('game-achievements', async (_event, id: string, refresh = false) => {
     if (typeof id !== 'string' || typeof refresh !== 'boolean') throw Error('Invalid achievements request.');
     const game = store.games.find(game => game.id === id);
     if (!game) throw Error('Game not found.');
-    if (authState.running || authState.stored !== true || !authState.username) return { status: 'signed-out' };
+    const xbox = xboxIdentity();
+    if (!xbox) return { status: 'signed-out' };
     if (!backend.current.capabilities.achievements || !backend.current.binaryPath) return { status: 'unsupported' };
-    const account = authState.username, binary = backend.current.binaryPath;
-    gameAchievements.select(account, binary);
+    const account = xbox.account, binary = backend.current.binaryPath;
+    gameAchievements.select(account, binary, xbox.play);
     const title = await installedTitleId(game.path).catch(() => undefined);
     if (!title) return { status: 'unavailable' };
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     const value = await gameAchievements.get(title, refresh);
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     return value;
   });
   ipcMain.handle('launch-game', (_event, id: string) => launchGame(id));

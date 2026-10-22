@@ -32,6 +32,15 @@ export interface AuthStatus {
   lastResult?: 'success' | 'failed';
   lastAction?: 'login' | 'logout';
   note: string;
+  /** In-game Xbox account (dual-account backends). Falls back to the license account. */
+  play?: PlayAccountStatus;
+}
+
+export interface PlayAccountStatus {
+  stored: boolean | null;
+  /** Account a game runs as: the play account, or the license account while `fallback`. */
+  username?: string;
+  fallback: boolean;
 }
 
 export interface GamePassSubscription {
@@ -378,6 +387,9 @@ export interface LauncherApi {
   readBackendDiagnosticLog(): Promise<DiagnosticLog>;
   login(): Promise<void>;
   logout(): Promise<void>;
+  loginPlay(): Promise<void>;
+  logoutPlay(): Promise<void>;
+  restorePreviousBackend(): Promise<void>;
   searchCatalog(query: string, cursor?: string): Promise<CatalogSearchResult>;
   getFeaturedCatalog(): Promise<CatalogSearchResult>;
   getAccountLibrary(kind: AccountLibraryPage['kind'], cursor?: string, refresh?: boolean): Promise<AccountLibraryPage>;

@@ -69,11 +69,39 @@ describe('previous backend restore', () => {
       await fs.writeFile(path.join(backends, 'current.json'), JSON.stringify({ commit: 'c', binaryPath: cli, builtAt: 'now' }));
       await fs.writeFile(path.join(backends, 'previous.json'), JSON.stringify({ commit: 'p', binaryPath: path.join(root, 'missing'), builtAt: 'now' }));
       const manager = new BackendManager(root, '', () => {}, () => false, vi.fn() as unknown as typeof fetch);
+      // Independent of downloads running on the host.
+      vi.spyOn(manager, 'externalDownloadRunning').mockResolvedValue(false);
       expect((await manager.refresh()).previousAvailable).toBe(true);
       await expect(manager.restorePrevious(() => {})).rejects.toThrow('no longer valid');
       expect(manager.current.previousAvailable).toBe(false);
       expect(manager.current.updating).toBe(false);
       expect(manager.current.binaryPath).toBe(cli);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('license account profile', () => {
+  it('keeps the license and in-game profiles in separate caches', async () => {
+    const { promises: fs } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { AccountProfile } = await import('./account-profile');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dual-profile-test-'));
+    try {
+      const reader = (gamertag: string, account: string) => vi.fn(async () => JSON.stringify({ schema: 1, account, gamertag }));
+      const playReader = reader('Player', 'play@test');
+      const licenseReader = reader('Store', 'store@test');
+      const play = new AccountProfile(root, () => {}, value => value, playReader);
+      const license = new AccountProfile(root, () => {}, value => value, licenseReader, 'xbox-profile-license.json');
+      await play.select('play@test', '/backend', true, true); await play.settled();
+      await license.select('store@test', '/backend', true); await license.settled();
+      expect(play.value?.gamertag).toBe('Player');
+      expect(license.value?.gamertag).toBe('Store');
+      expect(playReader.mock.calls[0][2]).toBe(true);
+      expect(licenseReader.mock.calls[0][2]).toBe(false);
+      expect((await fs.readdir(root)).sort()).toEqual(['xbox-profile-license.json', 'xbox-profile.json']);
+      await license.select(undefined); await license.settled();
+      expect(await fs.readdir(root)).toEqual(['xbox-profile.json']);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 });

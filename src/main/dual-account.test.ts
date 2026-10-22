@@ -54,3 +54,26 @@ describe('service account role log', () => {
     }
   });
 });
+
+describe('previous backend restore', () => {
+  it('drops an invalid previous pointer instead of offering a broken restore', async () => {
+    const { promises: fs } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dual-restore-test-'));
+    try {
+      const backends = path.join(root, 'xodus-backends');
+      await fs.mkdir(backends, { recursive: true });
+      const cli = path.join(root, 'xodus-cli');
+      await fs.writeFile(cli, '#!/bin/sh\nprintf "Commands:\\n  login      Sign in\\n  streaming      Download\\n"\n', { mode: 0o755 });
+      await fs.writeFile(path.join(backends, 'current.json'), JSON.stringify({ commit: 'c', binaryPath: cli, builtAt: 'now' }));
+      await fs.writeFile(path.join(backends, 'previous.json'), JSON.stringify({ commit: 'p', binaryPath: path.join(root, 'missing'), builtAt: 'now' }));
+      const manager = new BackendManager(root, '', () => {}, () => false, vi.fn() as unknown as typeof fetch);
+      expect((await manager.refresh()).previousAvailable).toBe(true);
+      await expect(manager.restorePrevious(() => {})).rejects.toThrow('no longer valid');
+      expect(manager.current.previousAvailable).toBe(false);
+      expect(manager.current.updating).toBe(false);
+      expect(manager.current.binaryPath).toBe(cli);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});

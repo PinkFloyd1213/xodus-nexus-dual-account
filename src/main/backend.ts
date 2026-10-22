@@ -218,11 +218,12 @@ export class BackendManager {
     try { await fs.access(this.previousPointerFile); return true; } catch { return false; }
   }
 
-  /** Build with the lock's Rust release when rustup has it installed. */
+  /** Build with the lock's Rust release when rustup already has it (never installs one). */
   private async lockedToolchain(): Promise<NodeJS.ProcessEnv> {
     try {
-      const result = await run('rustup', ['run', backendLock.rust, 'rustc', '--version'], { maxOutput: 20_000 });
-      return result.code === 0 ? { RUSTUP_TOOLCHAIN: backendLock.rust } : {};
+      const result = await run('rustup', ['toolchain', 'list'], { maxOutput: 100_000 });
+      const installed = result.code === 0 && result.output.split('\n').some(line => line.trim().startsWith(`${backendLock.rust}-`));
+      return installed ? { RUSTUP_TOOLCHAIN: backendLock.rust } : {};
     } catch { return {}; }
   }
 
@@ -230,16 +231,25 @@ export class BackendManager {
   async restorePrevious(onStatus: () => void): Promise<void> {
     await this.assertUpdateAllowed();
     if (this.status.updating) throw new Error('A backend installation is already running.');
-    const previous = JSON.parse(await fs.readFile(this.previousPointerFile, 'utf8')) as ManagedPointer;
-    if (!await this.validate(previous.binaryPath)) throw new Error('The previous backend is no longer valid.');
-    const current = await this.readPointer();
-    const pointerTmp = `${this.pointerFile}.tmp`;
-    await fs.writeFile(pointerTmp, JSON.stringify(previous, null, 2));
-    await fs.rename(pointerTmp, this.pointerFile);
-    if (current) await fs.writeFile(this.previousPointerFile, JSON.stringify(current, null, 2));
-    else await fs.rm(this.previousPointerFile, { force: true });
-    await this.refresh();
+    this.status.updating = true;
     onStatus();
+    try {
+      const previous = JSON.parse(await fs.readFile(this.previousPointerFile, 'utf8')) as ManagedPointer;
+      if (!await this.validate(previous.binaryPath)) {
+        await fs.rm(this.previousPointerFile, { force: true });
+        throw new Error('The previous backend is no longer valid.');
+      }
+      const current = await this.readPointer();
+      const pointerTmp = `${this.pointerFile}.tmp`;
+      await fs.writeFile(pointerTmp, JSON.stringify(previous, null, 2));
+      await fs.rename(pointerTmp, this.pointerFile);
+      if (current && await this.validate(current.binaryPath)) await fs.writeFile(this.previousPointerFile, JSON.stringify(current, null, 2));
+      else await fs.rm(this.previousPointerFile, { force: true });
+    } finally {
+      this.status.updating = false;
+      await this.refresh();
+      onStatus();
+    }
   }
 
   async rebuild(onStatus: () => void): Promise<void> {
@@ -302,7 +312,9 @@ export class BackendManager {
       const pointer: ManagedPointer = { commit, binaryPath: managedCli, builtAt: new Date().toISOString(), linuxRunPatch: LINUX_RUN_PATCH,
         recipeSha256: backendRecipeSha256, version: backendLock.version, delivery: 'local' };
       const previous = await this.readPointer();
-      if (previous && previous.binaryPath !== managedCli) await fs.writeFile(this.previousPointerFile, JSON.stringify(previous, null, 2));
+      if (previous && previous.binaryPath !== managedCli && await this.validate(previous.binaryPath)) {
+        await fs.writeFile(this.previousPointerFile, JSON.stringify(previous, null, 2));
+      }
       const pointerTmp = `${this.pointerFile}.tmp`;
       await fs.writeFile(pointerTmp, JSON.stringify(pointer, null, 2));
       await fs.rename(pointerTmp, this.pointerFile);

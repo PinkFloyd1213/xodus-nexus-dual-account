@@ -27,7 +27,16 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install account-free runtime fixture toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+        # A stalled Ubuntu mirror must not hold the whole build: bounded retries.
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update \
+              && timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y gcc-mingw-w64-x86-64 \
+              && exit 0
+            echo "apt attempt $attempt failed, retrying"; sleep 10
+          done
+          exit 1
       - name: Version this build
         id: version
         run: |

@@ -1,8 +1,21 @@
+import { spawn } from 'node:child_process';
 import { constants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { LauncherUpdate } from '../shared/types.js';
 import { isNewerVersion } from '../shared/utils.js';
+
+/**
+ * Start the installed AppImage once this process has exited. Electron's
+ * app.relaunch() runs its relauncher with no_new_privs, so the setuid fusermount
+ * cannot mount the new image ("Cannot mount AppImage"). A plain detached shell
+ * keeps normal privileges and waits for the single-instance lock to be released.
+ */
+export function relaunchAfterExit(target: string, pid = process.pid, start: typeof spawn = spawn): void {
+  const child = start('/bin/sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', target, String(pid)],
+    { detached: true, stdio: 'ignore', env: process.env });
+  child.unref();
+}
 
 // Dual-account fork: only its own releases may replace this AppImage.
 export const LAUNCHER_REPOSITORY = 'PinkFloyd1213/xodus-nexus-dual-account';

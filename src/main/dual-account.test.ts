@@ -146,3 +146,17 @@ describe('fork releases and backend updates', () => {
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 });
+
+describe('launcher restart after an update', () => {
+  it('starts the new AppImage from a detached shell after this process exits', async () => {
+    const { relaunchAfterExit } = await import('./launcher-update');
+    const unref = vi.fn();
+    const start = vi.fn(() => ({ unref })) as unknown as typeof import('node:child_process').spawn;
+    relaunchAfterExit('/apps/Xodus Nexus.AppImage', 4242, start);
+    const [command, args, options] = (start as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(command).toBe('/bin/sh');
+    expect(args).toEqual(['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', '/apps/Xodus Nexus.AppImage', '4242']);
+    expect(options).toMatchObject({ detached: true, stdio: 'ignore' });
+    expect(unref).toHaveBeenCalled();
+  });
+});

@@ -28,7 +28,7 @@ import { antiCheatEnvironment } from './anti-cheat.js';
 import { gameLaunchArguments, preparedGameWine } from './game-launch.js';
 import { prepareGameWrapper, type GameWrapper } from './game-wrapper.js';
 import { normalizeLaunchTools } from '../shared/launch-tools.js';
-import { LauncherUpdater } from './launcher-update.js';
+import { LauncherUpdater, relaunchAfterExit } from './launcher-update.js';
 import { copyDiagnosticFile, diagnosticLogFile, readDiagnosticTail } from './diagnostic-log.js';
 import { BackendDiagnostics, setBackendDiagnostics } from './backend-diagnostics.js';
 import { queryGameUpdate } from './game-updates.js';
@@ -1292,7 +1292,7 @@ function registerIpc(): void {
       if (externalEnvironment[key] === undefined) delete process.env[key];
       else process.env[key] = externalEnvironment[key];
     }
-    app.relaunch({ execPath: launcherUpdater.targetPath, args: [] }); app.quit();
+    relaunchAfterExit(launcherUpdater.targetPath); app.quit();
   });
   ipcMain.handle('check-game-updates', (_event, id?: string) => {
     if (gameUpdateJob) return gameUpdateJob;

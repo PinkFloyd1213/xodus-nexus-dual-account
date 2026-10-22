@@ -152,7 +152,10 @@ export class BackendManager {
 
   async checkUpdate(): Promise<BackendStatus> {
     if (this.sourceOnly) {
-      Object.assign(this.status, { releaseAvailable: false, updateAvailable: false,
+      // A source build from an older recipe (patches or repository changed) needs a rebuild.
+      const pointer = await this.readPointer();
+      const outdated = this.status.source === 'managed' && pointer?.recipeSha256 !== backendRecipeSha256;
+      Object.assign(this.status, { releaseAvailable: false, updateAvailable: !this.status.capabilities.dualAccount || outdated,
         blockReason: this.status.capabilities.dualAccount ? undefined : DUAL_ACCOUNT_RELEASE_BLOCK });
       return this.current;
     }

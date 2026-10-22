@@ -96,6 +96,7 @@ export function TopStatus({ data, go }: { data: AppSnapshot; go: (page: Page) =>
   const updates = [
     data.launcherUpdate?.latestVersion && !restart ? `Launcher ${data.launcherUpdate.latestVersion}` : '',
     data.backend.releaseAvailable && data.backend.updateAvailable ? `Backend ${data.backend.releaseVersion ?? ''}`.trim() : '',
+    data.backend.dualAccountBuild && data.backend.capabilities.dualAccount && data.backend.updateAvailable ? 'Dual-account backend' : '',
     nexusRuntimeUpdateAvailable(data.runtime) ? `Runtime ${data.runtime.nexusVersion?.replace(/^runtime-/, '') ?? ''}`.trim() : '',
   ].filter(Boolean);
   const updateTitle = [restart ? 'Restart to finish launcher update.' : '', updates.length ? `Available updates: ${updates.join(', ')}` : ''].filter(Boolean).join(' ');
@@ -954,7 +955,7 @@ function DualAccountBackendButtons({ data, busy, invoke }: { data: AppSnapshot; 
   const disabled = Boolean(busy) || data.backend.updating || data.backend.checking;
   return <>
     {data.backend.previousAvailable ? <button className="secondary" disabled={disabled} onClick={() => invoke('backend-restore', () => window.launcher.restorePreviousBackend(), 'The previous backend was restored.')}>Restore previous backend</button> : null}
-    <button className={active ? 'secondary' : 'primary'} disabled={disabled} onClick={() => invoke('backend-rebuild', () => window.launcher.rebuildBackend(), 'The dual-account backend was built and activated.')}>{busy === 'backend-rebuild' || data.backend.updating ? <LoaderCircle className="spin" /> : <Github />}{active ? 'Rebuild dual-account backend' : 'Use dual-account backend'}</button>
+    <button className={active && !data.backend.updateAvailable ? 'secondary' : 'primary'} disabled={disabled} onClick={() => invoke('backend-rebuild', () => window.launcher.rebuildBackend(), 'The dual-account backend was built and activated.')}>{busy === 'backend-rebuild' || data.backend.updating ? <LoaderCircle className="spin" /> : <Github />}{!active ? 'Use dual-account backend' : data.backend.updateAvailable ? 'Update dual-account backend' : 'Rebuild dual-account backend'}</button>
   </>;
 }
 

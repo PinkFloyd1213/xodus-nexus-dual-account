@@ -16,7 +16,8 @@ function assetUrl(url: string, tag: string, name: string): boolean {
   return url === `https://github.com/${REPO}/releases/download/${tag}/${name}`;
 }
 export function launcherCandidate(releases: Release[], current: string): LauncherCandidate | undefined {
-  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name));
+  // Fork releases are tagged vX.Y.Z-dual.N (N = build), newer than upstream vX.Y.Z.
+  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+(?:-dual\.\d+)?$/.test(r.tag_name));
   stable.sort((a, b) => isNewerVersion(a.tag_name, b.tag_name) ? -1 : isNewerVersion(b.tag_name, a.tag_name) ? 1 : 0);
   for (const r of stable) {
     if (!isNewerVersion(r.tag_name, current)) continue;

@@ -17,7 +17,8 @@ describe('dual-account launcher', () => {
     expect(manager.current.dualAccountBuild).toBe(true);
     const status = await manager.checkUpdate();
     expect(status.releaseAvailable).toBe(false);
-    expect(status.updateAvailable).toBe(false);
+    // No dual-account backend yet: a source build is the pending update.
+    expect(status.updateAvailable).toBe(true);
     expect(status.blockReason).toContain('Use dual-account backend');
     await expect(manager.update(() => {})).rejects.toThrow('dual-account');
     expect(fetcher).not.toHaveBeenCalled();
@@ -102,6 +103,46 @@ describe('license account profile', () => {
       expect((await fs.readdir(root)).sort()).toEqual(['xbox-profile-license.json', 'xbox-profile.json']);
       await license.select(undefined); await license.settled();
       expect(await fs.readdir(root)).toEqual(['xbox-profile.json']);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('fork releases and backend updates', () => {
+  it('offers dual-account launcher releases newer than the running build', async () => {
+    const { launcherCandidate, LAUNCHER_REPOSITORY } = await import('./launcher-update');
+    const release = (version: string) => {
+      const name = `Xodus-Nexus-${version}-x86_64.AppImage`;
+      const url = (file: string) => `https://github.com/${LAUNCHER_REPOSITORY}/releases/download/v${version}/${file}`;
+      return { tag_name: `v${version}`, draft: false, prerelease: false, assets: [
+        { name, size: 100, browser_download_url: url(name) },
+        { name: `${name}.sha512sum`, size: 200, browser_download_url: url(`${name}.sha512sum`) },
+      ] };
+    };
+    expect(launcherCandidate([release('0.3.10-dual.5')], '0.3.10')?.version).toBe('0.3.10-dual.5');
+    expect(launcherCandidate([release('0.3.10-dual.5')], '0.3.10-dual.6')).toBeUndefined();
+    expect(launcherCandidate([release('0.3.10-dual.5'), release('0.3.11-dual.7')], '0.3.10-dual.5')?.version).toBe('0.3.11-dual.7');
+  });
+
+  it('flags a source build from an older recipe as outdated', async () => {
+    const { promises: fs } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { backendRecipeSha256 } = await import('./backend-package');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dual-outdated-test-'));
+    try {
+      const backends = path.join(root, 'xodus-backends');
+      await fs.mkdir(backends, { recursive: true });
+      const cli = path.join(root, 'xodus-cli');
+      await fs.writeFile(cli, '#!/bin/sh\nprintf "Commands:\\n  login      Sign in\\n  streaming      Download\\n      --account <ACCOUNT>\\n"\n', { mode: 0o755 });
+      const pointer = (recipeSha256: string) => fs.writeFile(path.join(backends, 'current.json'), JSON.stringify({ commit: 'c', binaryPath: cli, builtAt: 'now', recipeSha256 }));
+      const manager = new BackendManager(root, '', () => {}, () => false, vi.fn() as unknown as typeof fetch);
+      await pointer('older-recipe');
+      await manager.refresh();
+      expect(manager.current.capabilities.dualAccount).toBe(true);
+      expect((await manager.checkUpdate()).updateAvailable).toBe(true);
+      await pointer(backendRecipeSha256);
+      await manager.refresh();
+      expect((await manager.checkUpdate()).updateAvailable).toBe(false);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 });

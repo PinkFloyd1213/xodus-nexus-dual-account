@@ -4,6 +4,8 @@
 
 # Xodus Nexus
 
+> **Dual-account edition (fork).** Game Pass licenses come from a Store account while games run as your personal Xbox account, like the Xbox app on Windows. See [docs/DUAL_ACCOUNT.md](docs/DUAL_ACCOUNT.md) (French).
+
 Your Microsoft Store PC games, on Linux.
 
 [![CI](https://github.com/domsvoboda/xodus-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/domsvoboda/xodus-nexus/actions/workflows/ci.yml)

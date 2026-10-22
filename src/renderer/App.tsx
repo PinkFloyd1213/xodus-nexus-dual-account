@@ -937,7 +937,7 @@ function PlayAccountCard({ data, busy, invoke }: { data: AppSnapshot; busy?: str
   const blocked = Boolean(busy) || data.auth.running || !data.backend.capabilities.login;
   return <section className="settings-card account-card">
     <div className="settings-heading"><AccountAvatar auth={data.auth} large /><div><span className="overline">XBOX ACCOUNT · IN-GAME</span>
-      <h2>{own ? data.auth.gamertag ?? play?.username : play?.stored === null ? 'Status unavailable' : 'Same as the license account'}</h2>
+      <h2>{own ? data.auth.gamertag ?? play?.username : !play || play.stored === null ? 'Status unavailable' : 'Same as the license account'}</h2>
       <p>{own ? `${play?.username} · gamertag, achievements, cloud saves and play time` : 'Sign in with your personal Xbox account to play as yourself, like the Xbox app on Windows.'}</p></div>
       <span className={`status-label ${own ? 'ready' : 'unknown'}`}><StatusDot tone={own ? 'green' : 'amber'} />{own ? 'IN-GAME' : 'FALLBACK'}</span></div>
     <div className="account-note"><CircleAlert /><span>Games see only this account. Game Pass licenses, downloads and updates keep using the license account above. Restart a running game after changing it.</span></div>

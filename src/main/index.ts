@@ -342,7 +342,8 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
     accountLibrary.select(authState.stored === true ? authState.username : undefined,
       status.capabilities.library ? status.binaryPath : undefined, currentMarket());
     // Xbox data (gamertag, achievements, play time) follows the in-game account.
-    const xbox = xboxIdentity();
+    // Published right after a sign-in/out too, while authState.running is still set.
+    const xbox = xboxIdentity(true);
     gameActivities.select(xbox?.account, status.capabilities.gameActivity ? status.binaryPath : undefined, xbox?.play);
     gameAchievements.select(xbox?.account, status.capabilities.achievements ? status.binaryPath : undefined, xbox?.play);
     await accountProfile?.select(xbox?.account, status.capabilities.profile ? status.binaryPath : undefined, emit, xbox?.play);
@@ -369,10 +370,12 @@ async function readPlayAccount(binary: string, signal: AbortSignal): Promise<Pla
 
 /** Xbox identity shown like the Xbox app: the in-game account on dual-account
  * backends (which falls back to the license account), otherwise the account. */
-function xboxIdentity(): { account: string; play: boolean } | undefined {
-  if (authState.running) return undefined;
-  if (backend.current.capabilities.dualAccount && authState.play?.stored === true && authState.play.username) {
-    return { account: authState.play.username, play: true };
+function xboxIdentity(duringAuth = false): { account: string; play: boolean } | undefined {
+  if (authState.running && !duringAuth) return undefined;
+  if (backend.current.capabilities.dualAccount) {
+    if (authState.play?.stored === true && authState.play.username) return { account: authState.play.username, play: true };
+    // Never show the license account's Xbox data while the in-game account is unreadable.
+    if (authState.play?.stored === null) return undefined;
   }
   if (authState.stored === true && authState.username) return { account: authState.username, play: false };
   return undefined;

@@ -4,7 +4,7 @@
 
 # Xodus Nexus
 
-> **Dual-account edition (fork).** Game Pass licenses come from a Store account while games run as your personal Xbox account, like the Xbox app on Windows. See [docs/DUAL_ACCOUNT.md](docs/DUAL_ACCOUNT.md) (French).
+> **Dual-account edition (fork).** Game Pass licenses come from a Store account while games run as your personal Xbox account, like the Xbox app on Windows. See [docs/DUAL_ACCOUNT.md](docs/DUAL_ACCOUNT.md) and [docs/AUTOMATION.md](docs/AUTOMATION.md).
 
 Your Microsoft Store PC games, on Linux.
 

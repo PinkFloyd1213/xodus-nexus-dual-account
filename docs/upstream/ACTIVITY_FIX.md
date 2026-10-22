@@ -1,95 +1,90 @@
-# Correctif « Last played » — à proposer à Nexus upstream (optionnel)
+# "Last played" fix — optional upstream contribution
 
-> **Statut : non publié.** Le correctif est intégré à l'édition double compte
-> (dans `assets/xodus-dual-account.patch`, `patchId`
-> `linux-run-v38-dual-account-2` ou plus). Ce dossier sert seulement si tu
-> décides un jour de le proposer à
-> [domsvoboda/xodus-nexus](https://github.com/domsvoboda/xodus-nexus).
-> Rien n'a été envoyé.
+> **Status: not published.** The fix ships in the dual-account edition (inside
+> `assets/xodus-dual-account.patch`, `patchId` `linux-run-v38-dual-account-2`
+> or later). This folder is only for proposing it to
+> [domsvoboda/xodus-nexus](https://github.com/domsvoboda/xodus-nexus) some day.
+> Nothing has been sent.
 
-## Le bug (présent dans Nexus d'origine)
+## The bug (present in upstream Nexus)
 
-Sur la fiche d'un jeu, **Last played** est toujours indisponible, et Nexus
-affiche *« Some Xbox activity could not be retrieved »*. Pour un jeu sans temps
-de jeu enregistré, aucune activité ne s'affiche.
+On a game's details page, **Last played** is always unavailable and Nexus shows
+*"Some Xbox activity could not be retrieved"*. For a game with no recorded play
+time, no activity is shown at all.
 
-Les deux causes se trouvent dans `assets/xodus-game-activity.patch` (fichier
-`crates/xodus-cli/src/commands/game_activity.rs`) :
+Both causes are in `assets/xodus-game-activity.patch`
+(`crates/xodus-cli/src/commands/game_activity.rs`):
 
-1. **La requête titlehub ne peut pas renvoyer la date.**
-   - Sans en-tête `Accept-Language`, titlehub répond **HTTP 400**.
-   - Même avec cet en-tête, la décoration `detail` renvoie `titleHistory: null`.
-     Seule la décoration `titlehistory` contient `lastTimePlayed`.
-2. **Une statistique sans valeur est traitée comme une erreur.** Quand un jeu
-   n'a pas encore de temps enregistré, userstats renvoie `MinutesPlayed` sans
-   `value`. Le parseur échoue sur ce cas au lieu de le traiter comme une
-   absence de donnée.
+1. **The titlehub request cannot return the date.**
+   - Without an `Accept-Language` header, titlehub answers **HTTP 400**.
+   - Even with that header, the `detail` decoration returns
+     `titleHistory: null`. Only the `titlehistory` decoration contains
+     `lastTimePlayed`.
+2. **A stat without a value is treated as an error.** When a game has no
+   recorded play time yet, userstats returns `MinutesPlayed` without `value`.
+   The parser fails on it instead of treating it as no data.
 
-Ce bug a été vérifié le 22.10.2026 sur un vrai compte, avec Star Trucker,
-Minecraft Dungeons et BALL x PIT. Une fois corrigé, le temps de jeu et la date
-de dernière partie s'affichent, et l'activité n'est plus marquée partielle.
+Verified on 22.10.2026 against a real account with Star Trucker, Minecraft
+Dungeons and BALL x PIT. Once fixed, time played and last played are shown and
+the activity is no longer marked partial.
 
-## Fichiers prêts
+## Ready-made files
 
 - [`xodus-activity-history.patch`](xodus-activity-history.patch)
-  (sha256 `919eb1d002f594a5c3d727968de48a85ada0081278a91c3337f0e9c6ba717d04`).
-  C'est le correctif seul, avec son test unitaire, **sans** le double compte ni
-  la ligne de diagnostic. Il s'applique après tous les patches du lock
-  upstream (vérifié contre le commit `53ea781` + les 38 patches de
-  `linux-run-v38`), et les 76 tests de `xodus-cli` passent.
+  (sha256 `919eb1d002f594a5c3d727968de48a85ada0081278a91c3337f0e9c6ba717d04`):
+  the fix alone, with its unit test, **without** the dual-account changes or
+  the diagnostic line. It applies after every patch of the upstream lock
+  (checked against commit `53ea781` plus the 38 patches of `linux-run-v38`),
+  and the 76 `xodus-cli` tests pass.
 
-## Comment le proposer
+## How to propose it
 
-### Sur GitHub : un seul fork par compte
+### GitHub allows one fork per account
 
-GitHub ne permet qu'**un fork d'un même dépôt par compte**. Si tu veux une PR
-qui ne se mélange pas avec l'édition double compte, tu as deux options :
+GitHub allows only **one fork of a repository per account**. For a PR kept
+separate from the dual-account edition, either:
 
-- **Échanger les rôles.** Renommer le fork `xodus-nexus-dual-account` en
-  `xodus-nexus` pour les contributions, puis recréer
-  `xodus-nexus-dual-account` comme dépôt **indépendant** (pas un fork, il peut
-  être privé). Le code du launcher n'a pas à changer, puisque le nom est
-  conservé.
-- **Utiliser une organisation GitHub gratuite.** Il faut la créer à la main
-  sur github.com, puis forker dedans :
-  `gh repo fork domsvoboda/xodus-nexus --org <org>`.
+- **Swap roles.** Rename the `xodus-nexus-dual-account` fork to `xodus-nexus`
+  for contributions, then recreate `xodus-nexus-dual-account` as an
+  **independent** repository (not a fork; it can be private). The launcher code
+  does not change because the name is kept.
+- **Use a free GitHub organization.** Create it on github.com, then fork into
+  it: `gh repo fork domsvoboda/xodus-nexus --org <org>`.
 
-Le plus simple reste d'ouvrir **un ticket seul**, avec le texte ci-dessous.
-Aucun fork n'est nécessaire.
+The simplest option is **an issue only**, with the text below. No fork needed.
 
-### Préparer la PR (en local)
+### Preparing the PR (locally)
 
-`CONTRIBUTING.md` de Nexus demande une branche `fix/…` qui cible `develop`.
+Nexus' `CONTRIBUTING.md` asks for a `fix/…` branch targeting `develop`.
 
 ```bash
 git fetch upstream
 git switch -c fix/activity-last-played upstream/develop
-cp docs/upstream/xodus-activity-history.patch assets/   # depuis la branche dual-account
+cp docs/upstream/xodus-activity-history.patch assets/   # from the dual-account branch
 ```
 
-Dans `assets/backend-source.lock.json` :
+In `assets/backend-source.lock.json`:
 
-1. Ajouter `{ "file": "xodus-activity-history.patch", "sha256": "<sha256 du fichier>" }`
-   **en dernier** dans `patches`.
-2. Incrémenter `patchId` (par exemple `linux-run-v39`). Ne pas toucher à
-   `compatibility`.
+1. Add `{ "file": "xodus-activity-history.patch", "sha256": "<file sha256>" }`
+   **last** in `patches`.
+2. Bump `patchId` (for example `linux-run-v39`). Leave `compatibility` alone.
 
-Vérifier que le lock de `develop` est toujours au commit `53ea781` avec les
-mêmes patches. Si ce n'est plus le cas, régénérer le patch : depuis
-`xodus-backend`, lancer `scripts/nexus-base.sh` sur le nouveau lock, réappliquer
-le changement à la main, puis `git diff -- crates`.
+Check that the `develop` lock still pins commit `53ea781` with the same
+patches. If not, regenerate the patch: from `xodus-backend`, run
+`scripts/nexus-base.sh` on the new lock, reapply the change by hand, then
+`git diff -- crates`.
 
-Ensuite, lancer les vérifications demandées par Nexus :
+Then run the checks Nexus asks for:
 
 ```bash
 npm ci && npm run build && npm run test:ci-tools
 node scripts/build-backend.mjs --work /tmp/nexus-backend-build --output /tmp/nexus-backend-release
 ```
 
-`build-backend.mjs` exige `rustc 1.99.0` : lance-le depuis un dossier où
-`rustup override set 1.99.0` est actif, ou avec `RUSTUP_TOOLCHAIN=1.99.0`.
+`build-backend.mjs` requires `rustc 1.99.0`: run it from a directory with
+`rustup override set 1.99.0`, or with `RUSTUP_TOOLCHAIN=1.99.0`.
 
-## Texte du ticket / de la PR (anglais)
+## Issue / PR text
 
 **Title:** Game activity: "Last played" is always unavailable and "Some Xbox activity could not be retrieved" is shown
 

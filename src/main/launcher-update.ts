@@ -4,7 +4,9 @@ import path from 'node:path';
 import type { LauncherUpdate } from '../shared/types.js';
 import { isNewerVersion } from '../shared/utils.js';
 
-const REPO = 'domsvoboda/xodus-nexus';
+// Dual-account fork: only its own releases may replace this AppImage.
+export const LAUNCHER_REPOSITORY = 'PinkFloyd1213/xodus-nexus-dual-account';
+const REPO = LAUNCHER_REPOSITORY;
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
 interface Asset { name: string; browser_download_url: string; size: number }
 interface Release { tag_name: string; draft?: boolean; prerelease?: boolean; assets: Asset[] }

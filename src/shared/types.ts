@@ -16,6 +16,8 @@ export interface BackendCapabilities {
   streamingControls?: boolean;
   streamingBandwidthLimit?: boolean;
   packageSelection?: boolean;
+  /** `--account store|play`: separate license and in-game accounts. */
+  dualAccount?: boolean;
   run: boolean;
   version?: string;
 }
@@ -57,6 +59,10 @@ export interface BackendStatus {
   releaseAvailable?: boolean;
   releaseVersion?: string;
   phase?: string;
+  /** This launcher pins the dual-account backend recipe. */
+  dualAccountBuild?: boolean;
+  /** A backend replaced by the last source build can be restored. */
+  previousAvailable?: boolean;
 }
 
 export interface RuntimeStatus {

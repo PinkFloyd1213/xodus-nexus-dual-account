@@ -34,6 +34,8 @@ export interface AuthStatus {
   note: string;
   /** In-game Xbox account (dual-account backends). Falls back to the license account. */
   play?: PlayAccountStatus;
+  /** License (Store) account picture while a separate in-game account is shown. */
+  licenseAvatarDataUrl?: string;
 }
 
 export interface PlayAccountStatus {

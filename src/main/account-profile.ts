@@ -38,8 +38,8 @@ export class AccountProfile {
   private disk: Promise<void> = Promise.resolve();
   private readonly file: string;
   constructor(userData: string, private changed: () => void,
-    private normalize: (dataUrl: string) => string | undefined, private reader: Reader = readProfile) {
-    this.file = path.join(userData, 'xbox-profile.json');
+    private normalize: (dataUrl: string) => string | undefined, private reader: Reader = readProfile, fileName = 'xbox-profile.json') {
+    this.file = path.join(userData, fileName);
   }
   cancel(): void { this.generation++; this.controller?.abort(); this.controller = undefined; }
   async settled(): Promise<void> { await this.job; await this.disk; }

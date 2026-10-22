@@ -129,6 +129,8 @@ let gameUpdateJob: Promise<void> | undefined;
 let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 let shortcuts: GameShortcuts;
 let accountProfile: AccountProfile;
+/** License (Store) account profile, read only while a separate Xbox account is shown. */
+let licenseProfile: AccountProfile | undefined;
 let preparingLaunch = false;
 let preparingInstall = false;
 let preparingContent = false;
@@ -199,7 +201,8 @@ function snapshot(): AppSnapshot {
     downloads: structuredClone(store.downloads.map(task => downloadCancellations.has(task.id)
       ? { ...task, cancelling: true, canPause: false, phase: 'Cancelling download and checking files…' } : task)),
     settings: structuredClone(store.settings),
-    auth: structuredClone({ ...authState, gamertag: accountProfile?.value?.gamertag, avatarDataUrl: accountProfile?.value?.avatarDataUrl, subscription: accountProfile?.value?.subscription }),
+    auth: structuredClone({ ...authState, gamertag: accountProfile?.value?.gamertag, avatarDataUrl: accountProfile?.value?.avatarDataUrl,
+      subscription: accountProfile?.value?.subscription ?? licenseProfile?.value?.subscription, licenseAvatarDataUrl: licenseProfile?.value?.avatarDataUrl }),
     launcherUpdate: structuredClone(launcherUpdater.state),
     gameUpdates: structuredClone(gameUpdates),
     downloadProgressSupported: Boolean(backend.current.capabilities.streamingProgressJson),
@@ -347,6 +350,11 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
     gameActivities.select(xbox?.account, status.capabilities.gameActivity ? status.binaryPath : undefined, xbox?.play);
     gameAchievements.select(xbox?.account, status.capabilities.achievements ? status.binaryPath : undefined, xbox?.play);
     await accountProfile?.select(xbox?.account, status.capabilities.profile ? status.binaryPath : undefined, emit, xbox?.play);
+    // After the in-game profile read, so both never renew device tokens at once.
+    const license = xbox?.play && authState.play?.fallback === false && authState.stored === true ? authState.username : undefined;
+    const licenseBinary = status.capabilities.profile ? status.binaryPath : undefined;
+    if (!license) await licenseProfile?.select(undefined);
+    else void accountProfile?.settled().then(() => licenseProfile?.select(license, licenseBinary, emit)).catch(() => { /* Optional picture. */ });
   }, () => key === accountRefreshKey() && (!authState.running || afterAuth));
   if (emit) emitSnapshot();
   return structuredClone(authState);
@@ -446,6 +454,7 @@ async function runAuth(command: 'login' | 'logout', play = false): Promise<void>
     const view = fallbackAuthViewFactory(request => authViewFactory(mainWindow ?? undefined, undefined, request), () => browserAuthViewFactory());
     if (shutdownStarted) throw Error('The launcher is closing.');
     await accountProfile.select(undefined);
+    await licenseProfile?.select(undefined);
     if (shutdownStarted) throw Error('The launcher is closing.');
     const tracked = command === 'login' ? startAuthTransport(binary, view, undefined, undefined, roleArgs)
       : spawnTracked(binary, [command, ...roleArgs], { onLine: (line) => emitLog('auth', line) });
@@ -1752,7 +1761,7 @@ app.whenReady().then(async () => {
   store = new StateStore(app.getPath('userData'));
   await store.load();
   downloadCleanup = new DownloadCleanup(app.getPath('userData'));
-  accountProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, dataUrl => {
+  const normalizePicture = (dataUrl: string): string | undefined => {
     try {
       const picture = nativeImage.createFromDataURL(dataUrl);
       if (picture.isEmpty()) return;
@@ -1761,7 +1770,9 @@ app.whenReady().then(async () => {
       const scale = Math.min(1, 256 / Math.max(width, height));
       return picture.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: 'best' }).toDataURL();
     } catch { return undefined; }
-  });
+  };
+  accountProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, normalizePicture);
+  licenseProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, normalizePicture, undefined, 'xbox-profile-license.json');
   launcherUpdater = new LauncherUpdater(app.getVersion(), app.isPackaged ? process.env.APPIMAGE : undefined, app.getPath('userData'), scheduleSnapshot);
   await launcherUpdater.initialize();
   const dataHome = process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME)
@@ -1859,6 +1870,7 @@ app.on('before-quit', (event) => {
   installQueue.stop();
   accountLibrary.reset();
   accountProfile?.cancel();
+  licenseProfile?.cancel();
   accountRefresh.invalidate();
   if (shutdownStarted || (!walletUnlocker.busy && !backendDiagnostics?.pendingWrites && !authJob && !preparingInstall && downloadCancellations.size === 0 && installQueue.size === 0 && operations.size === 0 && serviceSessions.size === 0 && !checkingGameUpdates && !launcherUpdater?.state.updating)) return;
   event.preventDefault();

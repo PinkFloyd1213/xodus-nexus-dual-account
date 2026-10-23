@@ -50,22 +50,6 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Read pinned Rust version
-        run: echo "BACKEND_RUST=$(node -p 'require("./assets/backend-source.lock.json").rust')" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.BACKEND_RUST }}
-      - name: Install build tools
-        # A stalled Ubuntu mirror must not hold the review: bounded retries.
-        timeout-minutes: 8
-        run: |
-          for attempt in 1 2 3; do
-            timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update \
-              && timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends gcc-mingw-w64-x86-64 pkg-config libssl-dev protobuf-compiler libdbus-1-dev \
-              && exit 0
-            echo "apt attempt $attempt failed, retrying"; sleep 10
-          done
-          exit 1
       - name: Claude is not configured yet
         if: env.HAS_CLAUDE_TOKEN != 'true'
         run: echo "::notice::Add the CLAUDE_CODE_OAUTH_TOKEN secret (docs/AUTOMATION.md) to enable the Claude review."
@@ -102,4 +86,4 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch' && format('This run was started by hand: write the summary to /tmp/claude-summary.md and post it with `gh pr comment {0} --body-file /tmp/claude-summary.md`.', steps.pr.outputs.number) || '' }}
           claude_args: >-
             --max-turns 80
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(scripts/nexus-base.sh *),Bash(scripts/dual-account-patch.sh *),Bash(cargo build *),Bash(cargo test *),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *),Bash(gh pr comment ${{ steps.pr.outputs.number }} --body-file /tmp/claude-summary.md)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *),Bash(gh pr comment ${{ steps.pr.outputs.number }} --body-file /tmp/claude-summary.md)"

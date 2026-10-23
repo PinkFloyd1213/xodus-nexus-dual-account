@@ -158,10 +158,10 @@ index b6d09351b850b1c85baeebb974df0e6d050d909e..555dce9dde9f7cc98838e3680f6fca56
          Ok(token) => token,
          Err(error) => {
 diff --git a/crates/xodus-cli/src/commands/logout.rs b/crates/xodus-cli/src/commands/logout.rs
-index 2c4fe4bd774ee086482d6511bea8c9981cc1d178..df66553c6eac7fb9e044d50207052a24d2ac3739 100644
+index 2c4fe4bd774ee086482d6511bea8c9981cc1d178..532f7ec28389dc01b624f8f7c3be35ed7ede2077 100644
 --- a/crates/xodus-cli/src/commands/logout.rs
 +++ b/crates/xodus-cli/src/commands/logout.rs
-@@ -1,8 +1,16 @@
+@@ -1,8 +1,26 @@
  use std::process::ExitCode;
 -use xodus::tokens::TokenManager;
 +use xodus::tokens::{AccountRole, TokenManager};
@@ -176,10 +176,89 @@ index 2c4fe4bd774ee086482d6511bea8c9981cc1d178..df66553c6eac7fb9e044d50207052a24
 +        }
 +    } else {
 +        super::subscription::clear();
++        // A device reset invalidates every account bound to that device, so a
++        // full sign-out also removes the play account.
++        if device
++            && tokens
++                .for_role(AccountRole::Play)
++                .remove_persistent()
++                .is_err()
++        {
++            return ExitCode::FAILURE;
++        }
 +    }
      if device && tokens.remove_device_license().is_err() {
          return ExitCode::FAILURE;
      }
+@@ -14,3 +32,68 @@ pub async fn run(tokens: &TokenManager, device: bool) -> ExitCode {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::HashMap;
++    use xodus::models::secrets::{Device, Token, User};
++    use xodus::tokens::PASSPORT_STS;
++
++    fn sign_in(tokens: &TokenManager, name: &str) {
++        let user = User {
++            puid: format!("{name}-puid"),
++            username: format!("{name}@example.test"),
++        };
++        let issued = HashMap::from([(
++            PASSPORT_STS.to_string(),
++            Token::Compact(format!("{name}-sts")),
++        )]);
++        tokens.save_user_session(user, issued).unwrap();
++    }
++
++    fn setup() -> TokenManager {
++        let tokens = TokenManager::with_memory();
++        tokens
++            .save_device_license(&Device {
++                puid: "synthetic".into(),
++                hwid: "synthetic".into(),
++                device_id: "synthetic".into(),
++                password: "synthetic".into(),
++                username: "synthetic".into(),
++                splicense: "synthetic".into(),
++            })
++            .unwrap();
++        sign_in(&tokens, "store");
++        sign_in(&tokens.for_role(AccountRole::Play), "play");
++        tokens
++    }
++
++    #[tokio::test]
++    async fn device_reset_signs_out_both_accounts() {
++        let tokens = setup();
++        assert_eq!(run(&tokens, true).await, ExitCode::SUCCESS);
++        assert!(tokens.get_device_license().is_err());
++        assert!(!tokens.has_user().unwrap());
++        assert!(!tokens.for_role(AccountRole::Play).has_user().unwrap());
++    }
++
++    #[tokio::test]
++    async fn plain_store_logout_keeps_play_and_play_logout_keeps_store() {
++        let tokens = setup();
++        assert_eq!(run(&tokens, false).await, ExitCode::SUCCESS);
++        assert!(tokens.get_device_license().is_ok());
++        assert!(tokens.for_role(AccountRole::Play).has_user().unwrap());
++        let tokens = setup();
++        assert_eq!(
++            run(&tokens.for_role(AccountRole::Play), false).await,
++            ExitCode::SUCCESS
++        );
++        assert!(tokens.has_user().unwrap());
++        assert!(!tokens.for_role(AccountRole::Play).has_user().unwrap());
++        assert_eq!(
++            run(&tokens.for_role(AccountRole::Play), true).await,
++            ExitCode::FAILURE
++        );
++    }
++}
 diff --git a/crates/xodus-cli/src/commands/profile.rs b/crates/xodus-cli/src/commands/profile.rs
 index bab4e91213120162181be18c2a4bb3e4b81e4056..6bfef558212c0872fda1edad98b8574a7be04255 100644
 --- a/crates/xodus-cli/src/commands/profile.rs

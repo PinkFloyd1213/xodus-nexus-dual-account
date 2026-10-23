@@ -31,6 +31,7 @@ import { normalizeLaunchTools } from '../shared/launch-tools.js';
 import { LauncherUpdater, relaunchAfterExit } from './launcher-update.js';
 import { copyDiagnosticFile, diagnosticLogFile, readDiagnosticTail } from './diagnostic-log.js';
 import { BackendDiagnostics, setBackendDiagnostics } from './backend-diagnostics.js';
+import { createDiagnosticReport, reportSystemInfo, saveDiagnosticReport, validateReportContent } from './diagnostic-report.js';
 import { queryGameUpdate } from './game-updates.js';
 import { DownloadProgress, PROGRESS_PREFIX } from './download-progress.js';
 import { DownloadCleanup } from './download-cleanup.js';
@@ -208,6 +209,19 @@ function snapshot(): AppSnapshot {
     downloadProgressSupported: Boolean(backend.current.capabilities.streamingProgressJson),
     gameOperation: gameOperation ? structuredClone(gameOperation) : undefined,
   };
+}
+
+async function saveReviewedReport(content: unknown): Promise<boolean> {
+  validateReportContent(content);
+  const options = {
+    title: 'Save diagnostic report',
+    defaultPath: path.join(app.getPath('downloads'), `nexus-diagnostics-${Date.now()}.txt`),
+    filters: [{ name: 'Text report', extensions: ['txt'] }],
+  };
+  const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return false;
+  await saveDiagnosticReport(result.filePath, content);
+  return true;
 }
 
 async function checkLauncherUpdate(): Promise<void> {
@@ -456,8 +470,12 @@ async function runAuth(command: 'login' | 'logout', play = false): Promise<void>
     await accountProfile.select(undefined);
     await licenseProfile?.select(undefined);
     if (shutdownStarted) throw Error('The launcher is closing.');
-    const tracked = command === 'login' ? startAuthTransport(binary, view, undefined, undefined, roleArgs)
-      : spawnTracked(binary, [command, ...roleArgs], { onLine: (line) => emitLog('auth', line) });
+    const tracked = command === 'login' ? (play ? startAuthTransport(binary, view, undefined, undefined, roleArgs) : startAuthTransport(binary, view))
+      // Explicit sign-out removes the local device registration too (on a
+      // dual-account backend that also signs out the play account bound to it).
+      // Ordinary sign-in must keep it, including when renewing an existing
+      // account. Signing out only the Xbox (play) account keeps the device.
+      : spawnTracked(binary, play ? ['logout', ...roleArgs] : ['logout', '--device'], { onLine: (line) => emitLog('auth', line) });
     operations.set(id, tracked.child);
     const result = await tracked.result;
     accountRefresh.invalidate();
@@ -1186,6 +1204,8 @@ function registerDemoIpc(catalogMarket: () => string): void {
   ipcMain.handle('copy-diagnostic-log', () => clipboard.writeText('Demo diagnostic log. No account data.'));
   ipcMain.handle('reveal-diagnostic-log', () => undefined);
   ipcMain.handle('read-backend-diagnostic-log', () => ({ name: 'backend.log', content: 'Sample backend diagnostics. No account data.', truncated: false }));
+  ipcMain.handle('create-diagnostic-report', () => ({ name: 'nexus-diagnostics-demo.txt', content: 'Xodus Nexus diagnostic report\nDemo data only.\nLauncher: ' + app.getVersion() }));
+  ipcMain.handle('save-diagnostic-report', (_event, content: unknown) => saveReviewedReport(content));
   ipcMain.handle('login', () => {});
   ipcMain.handle('logout', () => {});
   ipcMain.handle('login-play', () => {});
@@ -1325,6 +1345,15 @@ function registerIpc(): void {
     return accountLibrary.get(kind, cursor, refresh);
   });
   ipcMain.handle('read-backend-diagnostic-log', () => backendDiagnostics.read());
+  ipcMain.handle('create-diagnostic-report', async (_event, gameId?: string) => {
+    if (gameId !== undefined && (typeof gameId !== 'string' || !store.games.some(game => game.id === gameId))) throw Error('Game not found for diagnostics.');
+    return createDiagnosticReport({
+      snapshot: snapshot(), launcherVersion: app.getVersion(), systemInfo: await reportSystemInfo(),
+      backendLog: () => backendDiagnostics.read(), logsRoot: path.join(path.dirname(store.settings.runtimeRoot), 'logs'), gameId,
+      privateValues: [app.getPath('home'), os.userInfo().username],
+    });
+  });
+  ipcMain.handle('save-diagnostic-report', (_event, content: unknown) => saveReviewedReport(content));
   ipcMain.handle('catalog-featured', () => catalog.featured(catalogMarket()));
   ipcMain.handle('start-install', (_event, request: InstallRequest) => startInstall(request));
   ipcMain.handle('install-plan', async (_event, raw: string) => {

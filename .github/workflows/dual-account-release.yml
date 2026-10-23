@@ -57,7 +57,9 @@ jobs:
           sha512sum "$image" > "$image.sha512sum"
       - name: Publish release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Tagging a commit that changes .github/workflows (e.g. an upstream
+          # merge) needs Workflows permission, which GITHUB_TOKEN never has.
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           image="release/Xodus-Nexus-${VERSION}-x86_64.AppImage"

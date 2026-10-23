@@ -70,7 +70,8 @@ export class LauncherUpdater {
     this.state = { currentVersion: version, checking: false, canInstall: false };
   }
   private async writableImage(): Promise<string> {
-    if (!this.image || !path.isAbsolute(this.image) || !this.image.endsWith('.AppImage')) throw new Error('In-app updates require a writable AppImage. Use the installer for this build.');
+    // Integrators such as Gear Lever rename images to lowercase *.appimage.
+    if (!this.image || !path.isAbsolute(this.image) || !/\.appimage$/i.test(this.image)) throw new Error('In-app updates require a writable AppImage. Use the installer for this build.');
     const target = await fs.realpath(this.image);
     const stat = await fs.lstat(target);
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o022)) throw new Error('The AppImage must be a regular file owned and writable only by your user.');

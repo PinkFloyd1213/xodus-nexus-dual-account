@@ -170,3 +170,27 @@ describe('GitHub rate limit message', () => {
     expect(githubFailure({ status: 500, headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1800000000' }) })).toBe('GitHub update check returned HTTP 500.');
   });
 });
+
+describe('in-app updates after Gear Lever integration', () => {
+  it('can update an image renamed to lowercase *.appimage', async () => {
+    const { promises: fs } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { LauncherUpdater } = await import('./launcher-update');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'gearlever-test-'));
+    try {
+      for (const name of ['xodus_nexus.appimage', 'Xodus-Nexus.AppImage']) {
+        const image = path.join(root, name);
+        await fs.writeFile(image, 'synthetic', { mode: 0o700 });
+        const updater = new LauncherUpdater('0.3.11', image, root, () => {}, vi.fn() as unknown as typeof fetch);
+        await updater.initialize();
+        expect(updater.state.canInstall).toBe(true);
+      }
+      const other = path.join(root, 'launcher.bin');
+      await fs.writeFile(other, 'synthetic', { mode: 0o700 });
+      const updater = new LauncherUpdater('0.3.11', other, root, () => {}, vi.fn() as unknown as typeof fetch);
+      await updater.initialize();
+      expect(updater.state.canInstall).toBe(false);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});

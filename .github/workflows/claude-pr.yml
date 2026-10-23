@@ -71,9 +71,12 @@ jobs:
         run: echo "::notice::Add the CLAUDE_CODE_OAUTH_TOKEN secret (docs/AUTOMATION.md) to enable the Claude review."
       - uses: anthropics/claude-code-action@v1
         if: env.HAS_CLAUDE_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
+          # Progress comments exist only for PR events, not for a dispatched run.
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             You maintain the "dual-account" fork of Xodus Nexus. Read docs/DUAL_ACCOUNT.md first.
             Pull request #${{ steps.pr.outputs.number }}: branch ${{ steps.pr.outputs.head }} into dual-account.
@@ -99,6 +102,7 @@ jobs:
                force-push, never touch secrets or tokens, never print account data.
             Finish with a short summary in French for the owner: what changed upstream, what you fixed, what is
             left for a human, and whether it looks safe to merge.
+            ${{ github.event_name == 'workflow_dispatch' && format('This run was started by hand: write the summary to /tmp/claude-summary.md and post it with `gh pr comment {0} --body-file /tmp/claude-summary.md`.', steps.pr.outputs.number) || '' }}
           claude_args: >-
             --max-turns 80
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(scripts/nexus-base.sh *),Bash(scripts/dual-account-patch.sh *),Bash(cargo build *),Bash(cargo test *),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(scripts/nexus-base.sh *),Bash(scripts/dual-account-patch.sh *),Bash(cargo build *),Bash(cargo test *),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *),Bash(gh pr comment ${{ steps.pr.outputs.number }} --body-file /tmp/claude-summary.md)"

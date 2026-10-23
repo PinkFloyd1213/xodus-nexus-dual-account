@@ -25,6 +25,8 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'claude[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     permissions:
       contents: write
       pull-requests: write
@@ -54,7 +56,11 @@ jobs:
         with:
           toolchain: ${{ env.BACKEND_RUST }}
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 pkg-config libssl-dev protobuf-compiler libdbus-1-dev
+      - name: Claude is not configured yet
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: echo "::notice::Add the CLAUDE_CODE_OAUTH_TOKEN secret (docs/AUTOMATION.md) to enable the Claude review."
       - uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true

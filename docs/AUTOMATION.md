@@ -20,6 +20,9 @@ exact copy of upstream.
 | `claude-pr.yml` | launcher | every PR into `dual-account` (including sync PRs) | Claude reviews, merges `dual-account` if needed, rebases the backend patch when the lock changed, fixes tests, pushes to the PR branch and summarizes. **Never merges.** |
 | `claude-mention.yml` | launcher | an `@claude …` comment by the owner | Claude does what was asked on the PR or issue |
 | `upstream-mirror.yml` | backend | daily at 05:07 UTC | keeps `main` equal to xodus-gaming/xodus so the commit pinned by the lock stays fetchable |
+| `nexus-sync.yml` | backend | daily at 05:27 UTC, or by hand | when upstream Nexus changes its backend recipe, adds it as one commit on `nexus-base` and opens a `nexus-sync` → `dual-account` PR |
+| `claude-pr.yml`, `claude-mention.yml` | backend | PRs into `dual-account`, `@claude` by the owner | same agent, Rust side: merges, routes new account uses to store/play, builds and tests |
+| `patch-export.yml` | backend | push to `dual-account` touching `crates/` | regenerates `xodus-dual-account.patch` and pushes it to the open Nexus `upstream-sync` PR, or opens a Nexus PR |
 | `dual-account.yml` | backend | push or PR on `dual-account` | build and tests of the dual-account backend |
 
 Upstream workflows that only serve upstream releases (`backend.yml`,
@@ -35,11 +38,25 @@ After an in-app launcher update, "Restart launcher" starts the new AppImage
 from a detached shell (`relaunchAfterExit()`), not through Electron's
 relauncher, which cannot mount AppImages.
 
+## How an upstream release flows
+
+1. domsvoboda publishes: the launcher repo opens "Sync upstream Nexus" (code)
+   and, if the backend recipe changed, the backend repo opens "Sync Nexus
+   backend recipe".
+2. Claude reviews both. Merge the **backend** PR first (merge commit, not
+   squash): `patch-export` then pushes the regenerated patch onto the launcher
+   sync PR.
+3. Merge the launcher PR once its checks are green: a release follows, then
+   use "Update dual-account backend" in Settings.
+
+Both repositories only allow merge commits, so upstream history and
+`nexus-base` stay ancestors of `dual-account`.
+
 ## One-time owner setup
 
 The Claude agent needs two things only the owner can do:
 
-1. **Install the Claude GitHub App** on `xodus-nexus-dual-account`:
+1. **Install the Claude GitHub App** on `xodus-nexus-dual-account` and `xodus-dual-account`:
    https://github.com/apps/claude (or `/install-github-app` in a `claude`
    terminal). Without the app, Claude cannot push fixes in a way that re-runs
    CI.
@@ -49,10 +66,11 @@ The Claude agent needs two things only the owner can do:
    claude setup-token
    ```
 
-   then store it as a repository secret named `CLAUDE_CODE_OAUTH_TOKEN`:
+   then store it as a secret named `CLAUDE_CODE_OAUTH_TOKEN` in **both** repositories:
 
    ```bash
    gh secret set CLAUDE_CODE_OAUTH_TOKEN -R PinkFloyd1213/xodus-nexus-dual-account
+   gh secret set CLAUDE_CODE_OAUTH_TOKEN -R PinkFloyd1213/xodus-dual-account
    ```
 
    Paste the token when prompted. Never put it in a file in the repository.

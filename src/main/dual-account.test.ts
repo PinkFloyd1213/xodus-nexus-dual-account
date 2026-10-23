@@ -160,3 +160,13 @@ describe('launcher restart after an update', () => {
     expect(unref).toHaveBeenCalled();
   });
 });
+
+describe('GitHub rate limit message', () => {
+  it('explains an exhausted anonymous quota instead of a bare 403', async () => {
+    const { githubFailure } = await import('./launcher-update');
+    const limited = { status: 403, headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1800000000' }) };
+    expect(githubFailure(limited)).toMatch(/hourly limit .* Try again after /);
+    expect(githubFailure({ status: 403, headers: new Headers() })).toBe('GitHub update check returned HTTP 403.');
+    expect(githubFailure({ status: 500, headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1800000000' }) })).toBe('GitHub update check returned HTTP 500.');
+  });
+});

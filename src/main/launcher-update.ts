@@ -11,6 +11,16 @@ import { isNewerVersion } from '../shared/utils.js';
  * cannot mount the new image ("Cannot mount AppImage"). A plain detached shell
  * keeps normal privileges and waits for the single-instance lock to be released.
  */
+/** Anonymous GitHub API calls are limited to 60 per hour per network. */
+export function githubFailure(response: Pick<Response, 'status' | 'headers'>): string {
+  const reset = Number(response.headers.get('x-ratelimit-reset'));
+  if ([403, 429].includes(response.status) && response.headers.get('x-ratelimit-remaining') === '0' && Number.isFinite(reset) && reset > 0) {
+    const time = new Date(reset * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `GitHub's hourly limit for update checks from this network is reached. Try again after ${time}.`;
+  }
+  return `GitHub update check returned HTTP ${response.status}.`;
+}
+
 export function relaunchAfterExit(target: string, pid = process.pid, start: typeof spawn = spawn): void {
   const child = start('/bin/sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', target, String(pid)],
     { detached: true, stdio: 'ignore', env: process.env });
@@ -89,7 +99,7 @@ export class LauncherUpdater {
     this.state.checking = true; this.state.error = undefined; this.changed();
     try {
       const response = await this.fetcher(API, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15_000) });
-      if (!response.ok) throw new Error(`GitHub update check returned HTTP ${response.status}.`);
+      if (!response.ok) throw new Error(githubFailure(response));
       const releases = await response.json() as Release[];
       if (!Array.isArray(releases)) throw new Error('Invalid GitHub release list.');
       this.candidate = launcherCandidate(releases, this.version);

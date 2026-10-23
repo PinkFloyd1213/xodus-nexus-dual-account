@@ -1,10 +1,25 @@
+import { spawn } from 'node:child_process';
 import { constants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { LauncherUpdate } from '../shared/types.js';
 import { isNewerVersion } from '../shared/utils.js';
 
-const REPO = 'domsvoboda/xodus-nexus';
+/**
+ * Start the installed AppImage once this process has exited. Electron's
+ * app.relaunch() runs its relauncher with no_new_privs, so the setuid fusermount
+ * cannot mount the new image ("Cannot mount AppImage"). A plain detached shell
+ * keeps normal privileges and waits for the single-instance lock to be released.
+ */
+export function relaunchAfterExit(target: string, pid = process.pid, start: typeof spawn = spawn): void {
+  const child = start('/bin/sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', target, String(pid)],
+    { detached: true, stdio: 'ignore', env: process.env });
+  child.unref();
+}
+
+// Dual-account fork: only its own releases may replace this AppImage.
+export const LAUNCHER_REPOSITORY = 'PinkFloyd1213/xodus-nexus-dual-account';
+const REPO = LAUNCHER_REPOSITORY;
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
 interface Asset { name: string; browser_download_url: string; size: number }
 interface Release { tag_name: string; draft?: boolean; prerelease?: boolean; assets: Asset[] }
@@ -14,7 +29,8 @@ function assetUrl(url: string, tag: string, name: string): boolean {
   return url === `https://github.com/${REPO}/releases/download/${tag}/${name}`;
 }
 export function launcherCandidate(releases: Release[], current: string): LauncherCandidate | undefined {
-  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name));
+  // Fork releases are tagged vX.Y.Z-dual.N (N = build), newer than upstream vX.Y.Z.
+  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+(?:-dual\.\d+)?$/.test(r.tag_name));
   stable.sort((a, b) => isNewerVersion(a.tag_name, b.tag_name) ? -1 : isNewerVersion(b.tag_name, a.tag_name) ? 1 : 0);
   for (const r of stable) {
     if (!isNewerVersion(r.tag_name, current)) continue;

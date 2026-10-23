@@ -1,0 +1,63 @@
+# Dual-account fork: every change on dual-account is tested and published as a
+# launcher release vX.Y.Z-dual.N, which the in-app updater offers.
+name: Dual-account release
+
+on:
+  push:
+    branches: [dual-account]
+    paths-ignore: ['docs/**', '**/*.md', '.github/ISSUE_TEMPLATE/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dual-account-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install account-free runtime fixture toolchain
+        # A stalled Ubuntu mirror must not hold the whole build: bounded retries.
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update \
+              && timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y gcc-mingw-w64-x86-64 \
+              && exit 0
+            echo "apt attempt $attempt failed, retrying"; sleep 10
+          done
+          exit 1
+      - name: Version this build
+        id: version
+        run: |
+          base=$(node -p 'require("./package.json").version.split("-")[0]')
+          version="${base}-dual.${GITHUB_RUN_NUMBER}"
+          npm version --no-git-tag-version --allow-same-version "$version" >/dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test and build the AppImage
+        run: npm run dist && npm run test:ci-tools
+      - name: Checksum
+        working-directory: release
+        run: |
+          image="Xodus-Nexus-${{ steps.version.outputs.version }}-x86_64.AppImage"
+          test -f "$image"
+          sha512sum "$image" > "$image.sha512sum"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="release/Xodus-Nexus-${VERSION}-x86_64.AppImage"
+          gh release create "v${VERSION}" "$image" "$image.sha512sum" \
+            --target "$GITHUB_SHA" --title "Xodus Nexus ${VERSION} (dual account)" \
+            --notes "Built from ${GITHUB_SHA} on branch dual-account. Backend recipe: $(node -p 'require("./assets/backend-source.lock.json").patchId')."

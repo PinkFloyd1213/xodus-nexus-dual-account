@@ -6,6 +6,7 @@ import { createConnection, createServer, type Server, type Socket } from 'node:n
 import path from 'node:path';
 import { backendDiagnostic, observeBackendChild } from './backend-diagnostics.js';
 import { CredentialErrorReader } from './credential-errors.js';
+import { stripAnsi } from '../shared/utils.js';
 
 export interface XodusServiceSession {
   socketPath: string;
@@ -112,6 +113,14 @@ export function selectedWinePath(
   return isManaged && activeWine ? activeWine : configuredWine;
 }
 
+/** Allowlisted account-role line from the service (request type, role, fallback only). */
+export function serviceAccountRole(line: string): string | undefined {
+  const match = /Issuing credentials\b.*\brequest=(MsaTokenRequest|StoreLicenseTokenRequest|StorePackageUpdatesRequest)\b.*\brole="?(store|play)"?.*\bfallback=(true|false)\b/
+    .exec(stripAnsi(line));
+  if (!match) return undefined;
+  return `Xodus account for ${match[1]}: ${match[2]}${match[3] === 'true' ? ' (play account not set, using the license account)' : ''}`;
+}
+
 export async function startXodusService(
   backendBinary: string,
   userData: string,
@@ -128,7 +137,7 @@ export async function startXodusService(
   await fs.chmod(runtimeDir, 0o700);
   const socketPath = path.join(runtimeDir, 'xodus.sock');
   const child = spawn(binary, [], {
-    env: { ...externalLauncherEnvironment(), XDG_RUNTIME_DIR: runtimeDir, XODUS_LOG: 'error' },
+    env: { ...externalLauncherEnvironment(), XDG_RUNTIME_DIR: runtimeDir, XODUS_LOG: 'error,xodus_service::connection::xml=info' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   observeBackendChild(child, 'service');
@@ -139,7 +148,18 @@ export async function startXodusService(
   let exitCode: number | null = null;
   let spawnError: Error | undefined;
   child.on('error', (error) => { spawnError = error; });
-  child.stdout.resume();
+  // Record which account (store/play) each request type uses, once per change.
+  const roles = new Map<string, string>();
+  let pending = '';
+  child.stdout.on('data', (bytes: Buffer) => {
+    const lines = (pending + bytes.toString('utf8')).split('\n');
+    pending = (lines.pop() ?? '').slice(-4096);
+    for (const line of lines) {
+      const role = serviceAccountRole(line);
+      const request = role?.split(':')[0];
+      if (role && request && roles.get(request) !== role) { roles.set(request, role); onStatus(role); }
+    }
+  });
   child.stderr.resume();
   child.once('exit', (code) => { exitCode = code ?? -1; });
   const stop = async () => {

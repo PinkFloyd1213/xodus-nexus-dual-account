@@ -18,7 +18,7 @@ function fixture(code = 0) {
     backend: { current: { capabilities: { externalAuth: true } } },
     prepareSystemWallet: vi.fn(async () => {}), fallbackAuthViewFactory: vi.fn(() => ({})),
     authViewFactory: vi.fn(), browserAuthViewFactory: vi.fn(), mainWindow: undefined,
-    shutdownStarted: false, accountProfile: { select: vi.fn(async () => {}) },
+    shutdownStarted: false, accountProfile: { select: vi.fn(async () => {}) }, licenseProfile: { select: vi.fn(async () => {}) },
     startAuthTransport: vi.fn(() => tracked), spawnTracked: vi.fn(() => tracked),
     emitLog: vi.fn(), operations: new Map(), refreshAccount: vi.fn(async () => {}), authJob: undefined,
   });
@@ -27,6 +27,18 @@ function fixture(code = 0) {
 }
 
 describe('explicit account actions', () => {
+  it('signs out only the Xbox (play) account without resetting the device', async () => {
+    const context = fixture();
+    context.backend.current.capabilities.dualAccount = true;
+    await runInContext("requestAuth('logout', true)", context);
+    expect(context.spawnTracked).toHaveBeenCalledWith('/synthetic/backend', ['logout', '--account', 'play'], expect.any(Object));
+  });
+  it('signs in the Xbox (play) account through the same transport', async () => {
+    const context = fixture();
+    context.backend.current.capabilities.dualAccount = true;
+    await runInContext("requestAuth('login', true)", context);
+    expect(context.startAuthTransport).toHaveBeenCalledWith('/synthetic/backend', expect.any(Object), undefined, undefined, ['--account', 'play']);
+  });
   it('fully signs out once with device reset, invalidates caches and refreshes account status', async () => {
     const context = fixture();
     await runInContext("requestAuth('logout')", context);

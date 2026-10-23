@@ -99,7 +99,7 @@ describe('prebuilt backend', () => {
       await fs.mkdir(managed);
       const old = '{"previous":"keep intact"}';
       await fs.writeFile(path.join(managed, 'current.json'), old);
-      const manager = new BackendManager(root, '', () => {}, () => scenario === 'busy-after-download' && downloading, fetcher);
+      const manager = new BackendManager(root, '', () => {}, () => scenario === 'busy-after-download' && downloading, fetcher, false);
       if (scenario === 'valid') {
         await manager.update(() => {});
         const pointer = JSON.parse(await fs.readFile(path.join(managed, 'current.json'), 'utf8'));
@@ -121,7 +121,7 @@ describe('prebuilt backend', () => {
 
   it('blocks installation before any download while a game/operation is active', async () => {
     const fetcher = vi.fn() as unknown as typeof fetch;
-    const manager = new BackendManager('/unused', '', () => {}, () => true, fetcher);
+    const manager = new BackendManager('/unused', '', () => {}, () => true, fetcher, false);
     await expect(manager.update(() => {})).rejects.toThrow('while authentication');
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -130,7 +130,7 @@ describe('prebuilt backend', () => {
     const fetcher = vi.fn(async () => new Response('[]')) as unknown as typeof fetch;
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'backend-absent-test-'));
     try {
-      const manager = new BackendManager(root, '', () => {}, () => false, fetcher);
+      const manager = new BackendManager(root, '', () => {}, () => false, fetcher, false);
       const status = await manager.checkUpdate();
       expect(status.releaseAvailable).toBe(false);
       expect(status.blockReason).toBe('No compatible Nexus backend release has been published yet.');

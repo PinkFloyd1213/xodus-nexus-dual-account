@@ -16,6 +16,8 @@ export interface BackendCapabilities {
   streamingControls?: boolean;
   streamingBandwidthLimit?: boolean;
   packageSelection?: boolean;
+  /** `--account store|play`: separate license and in-game accounts. */
+  dualAccount?: boolean;
   run: boolean;
   version?: string;
 }
@@ -30,6 +32,17 @@ export interface AuthStatus {
   lastResult?: 'success' | 'failed';
   lastAction?: 'login' | 'logout';
   note: string;
+  /** In-game Xbox account (dual-account backends). Falls back to the license account. */
+  play?: PlayAccountStatus;
+  /** License (Store) account picture while a separate in-game account is shown. */
+  licenseAvatarDataUrl?: string;
+}
+
+export interface PlayAccountStatus {
+  stored: boolean | null;
+  /** Account a game runs as: the play account, or the license account while `fallback`. */
+  username?: string;
+  fallback: boolean;
 }
 
 export interface GamePassSubscription {
@@ -57,6 +70,10 @@ export interface BackendStatus {
   releaseAvailable?: boolean;
   releaseVersion?: string;
   phase?: string;
+  /** This launcher pins the dual-account backend recipe. */
+  dualAccountBuild?: boolean;
+  /** A backend replaced by the last source build can be restored. */
+  previousAvailable?: boolean;
 }
 
 export interface RuntimeStatus {
@@ -375,6 +392,9 @@ export interface LauncherApi {
   saveDiagnosticReport(content: string): Promise<boolean>;
   login(): Promise<void>;
   logout(): Promise<void>;
+  loginPlay(): Promise<void>;
+  logoutPlay(): Promise<void>;
+  restorePreviousBackend(): Promise<void>;
   searchCatalog(query: string, cursor?: string): Promise<CatalogSearchResult>;
   getFeaturedCatalog(): Promise<CatalogSearchResult>;
   getAccountLibrary(kind: AccountLibraryPage['kind'], cursor?: string, refresh?: boolean): Promise<AccountLibraryPage>;

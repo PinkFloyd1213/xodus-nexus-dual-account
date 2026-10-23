@@ -1,0 +1,81 @@
+# Checks for PRs into dual-account: launcher tests plus the backend recipe
+# (clone, every pinned patch including xodus-dual-account.patch, build, tests).
+name: Dual-account checks
+
+on:
+  pull_request:
+    branches: [dual-account]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (used by the upstream sync)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dual-checks-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  launcher:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr) }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install account-free runtime fixture toolchain
+        # A stalled Ubuntu mirror must not hold the whole build: bounded retries.
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2 3; do
+            timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update \
+              && timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y gcc-mingw-w64-x86-64 \
+              && exit 0
+            echo "apt attempt $attempt failed, retrying"; sleep 10
+          done
+          exit 1
+      - run: npm run typecheck && npm run test && npm run test:ci-tools
+  backend:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr) }}
+      - name: Read pinned Rust version
+        run: echo "BACKEND_RUST=$(node -p 'require("./assets/backend-source.lock.json").rust')" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.BACKEND_RUST }}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev protobuf-compiler libdbus-1-dev
+      - name: Apply the pinned recipe exactly like Nexus
+        run: |
+          set -euo pipefail
+          read -r repo commit < <(node -p 'const l=require("./assets/backend-source.lock.json"); l.repository+" "+l.commit')
+          git clone --no-checkout "$repo" "$RUNNER_TEMP/src"
+          git -C "$RUNNER_TEMP/src" checkout --detach "$commit"
+          node -e '
+            const fs=require("fs"),crypto=require("crypto"),l=require("./assets/backend-source.lock.json");
+            const lock=crypto.createHash("sha256").update(fs.readFileSync(process.argv[1]+"/Cargo.lock")).digest("hex");
+            if (lock!==l.cargoLockSha256) throw Error("Cargo.lock mismatch");
+            for (const p of l.patches) if (crypto.createHash("sha256").update(fs.readFileSync("assets/"+p.file)).digest("hex")!==p.sha256) throw Error("checksum mismatch: "+p.file);
+            fs.writeFileSync(process.env.RUNNER_TEMP+"/patches.txt", l.patches.map(p=>p.file).join("\n")+"\n");' "$RUNNER_TEMP/src"
+          while read -r patch; do
+            git -C "$RUNNER_TEMP/src" apply --check "$PWD/assets/$patch"
+            git -C "$RUNNER_TEMP/src" apply "$PWD/assets/$patch"
+          done < "$RUNNER_TEMP/patches.txt"
+      - name: Build and test the dual-account backend
+        working-directory: ${{ runner.temp }}/src
+        run: |
+          cargo build --locked --release --no-default-features -p xodus-cli -p xodus-service
+          cargo test --locked --no-default-features -p xodus credential_
+          cargo test --locked --no-default-features -p xodus-cli
+          cargo test --locked -p xodus-service store_
+          ./target/release/xodus-cli login --help | grep -q -- '--account'

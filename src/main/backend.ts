@@ -10,6 +10,10 @@ import { discoverBackend, installBackend, type BackendArtifact } from './backend
 const REPOSITORY = backendLock.repository;
 export const LINUX_RUN_PATCH = backendLock.compatibility;
 const LINUX_RUN_RELEASE = backendLock.patchId;
+/** The pinned recipe adds separate store (license) and play (in-game) accounts.
+ * Prebuilt upstream releases lack it, so only source builds are installed. */
+export const DUAL_ACCOUNT_BACKEND = backendLock.patches.some(patch => patch.file === 'xodus-dual-account.patch');
+const DUAL_ACCOUNT_RELEASE_BLOCK = 'Prebuilt Nexus backends do not include dual-account support. Use "Use dual-account backend" to build it from the pinned source.';
 const EMPTY_CAPABILITIES: BackendCapabilities = {
   commands: [], account: false, login: false, logout: false, download: false, streaming: false, run: false,
 };
@@ -30,6 +34,8 @@ export class BackendManager {
     emitLog: (scope: string, line: string) => void,
     isOperationActive: () => boolean,
     private readonly fetcher: typeof fetch = fetch,
+    /** Only source builds of the pinned recipe; never install prebuilt releases. */
+    private readonly sourceOnly = DUAL_ACCOUNT_BACKEND,
   ) {
     this.managedRoot = path.join(userData, 'xodus-backends');
     this.pointerFile = path.join(this.managedRoot, 'current.json');
@@ -44,6 +50,7 @@ export class BackendManager {
       externalRoot,
       capabilities: EMPTY_CAPABILITIES,
       prerequisites: { git: false, cargo: false, rustc: false, protoc: false },
+      dualAccountBuild: sourceOnly,
     };
   }
 
@@ -68,6 +75,10 @@ export class BackendManager {
         capabilities.streamingBandwidthLimit = Boolean(capabilities.streamingControls && /(?:^|\s)--download-limit-kib(?:\s|$)/m.test(streaming.output));
         capabilities.packageSelection = streaming.code === 0 && capabilities.commands.includes('resolve-package') && /(?:^|\s)--selected-content-id(?:\s|$)/m.test(streaming.output);
       }
+      if (capabilities.login) {
+        const login = await run(binaryPath, ['login', '--help'], { maxOutput: 100_000 });
+        capabilities.dualAccount = login.code === 0 && /(?:^|\s)--account(?:\s|$)/m.test(login.output);
+      }
       return capabilities.login && capabilities.streaming ? capabilities : null;
     } catch { return null; }
   }
@@ -89,6 +100,7 @@ export class BackendManager {
     ]);
     this.status.prerequisites = { git, cargo, rustc, protoc };
 
+    this.status.previousAvailable = await this.previousAvailable();
     const pointer = await this.readPointer();
     if (pointer) {
       const capabilities = await this.validate(pointer.binaryPath);
@@ -139,6 +151,14 @@ export class BackendManager {
   }
 
   async checkUpdate(): Promise<BackendStatus> {
+    if (this.sourceOnly) {
+      // A source build from an older recipe (patches or repository changed) needs a rebuild.
+      const pointer = await this.readPointer();
+      const outdated = this.status.source === 'managed' && pointer?.recipeSha256 !== backendRecipeSha256;
+      Object.assign(this.status, { releaseAvailable: false, updateAvailable: !this.status.capabilities.dualAccount || outdated,
+        blockReason: this.status.capabilities.dualAccount ? undefined : DUAL_ACCOUNT_RELEASE_BLOCK });
+      return this.current;
+    }
     this.status.checking = true;
     try {
       this.artifact = await discoverBackend(this.fetcher);
@@ -160,6 +180,7 @@ export class BackendManager {
   }
 
   async update(onStatus: () => void): Promise<void> {
+    if (this.sourceOnly) throw new Error(DUAL_ACCOUNT_RELEASE_BLOCK);
     await this.assertUpdateAllowed();
     if (this.status.updating) throw new Error('A backend installation is already running.');
     this.status.updating = true;
@@ -192,6 +213,46 @@ export class BackendManager {
       this.status.phase = 'Backend update failed; the previous backend was kept.';
       throw error;
     } finally { this.status.updating = false; onStatus(); }
+  }
+
+  private get previousPointerFile(): string { return path.join(this.managedRoot, 'previous.json'); }
+
+  private async previousAvailable(): Promise<boolean> {
+    try { await fs.access(this.previousPointerFile); return true; } catch { return false; }
+  }
+
+  /** Build with the lock's Rust release when rustup already has it (never installs one). */
+  private async lockedToolchain(): Promise<NodeJS.ProcessEnv> {
+    try {
+      const result = await run('rustup', ['toolchain', 'list'], { maxOutput: 100_000 });
+      const installed = result.code === 0 && result.output.split('\n').some(line => line.trim().startsWith(`${backendLock.rust}-`));
+      return installed ? { RUSTUP_TOOLCHAIN: backendLock.rust } : {};
+    } catch { return {}; }
+  }
+
+  /** Swap back to the backend that was active before the last source build. */
+  async restorePrevious(onStatus: () => void): Promise<void> {
+    await this.assertUpdateAllowed();
+    if (this.status.updating) throw new Error('A backend installation is already running.');
+    this.status.updating = true;
+    onStatus();
+    try {
+      const previous = JSON.parse(await fs.readFile(this.previousPointerFile, 'utf8')) as ManagedPointer;
+      if (!await this.validate(previous.binaryPath)) {
+        await fs.rm(this.previousPointerFile, { force: true });
+        throw new Error('The previous backend is no longer valid.');
+      }
+      const current = await this.readPointer();
+      const pointerTmp = `${this.pointerFile}.tmp`;
+      await fs.writeFile(pointerTmp, JSON.stringify(previous, null, 2));
+      await fs.rename(pointerTmp, this.pointerFile);
+      if (current && await this.validate(current.binaryPath)) await fs.writeFile(this.previousPointerFile, JSON.stringify(current, null, 2));
+      else await fs.rm(this.previousPointerFile, { force: true });
+    } finally {
+      this.status.updating = false;
+      await this.refresh();
+      onStatus();
+    }
   }
 
   async rebuild(onStatus: () => void): Promise<void> {
@@ -230,7 +291,7 @@ export class BackendManager {
       log(`Building ${commit.slice(0, 10)} with Cargo…`);
       result = await run('cargo', ['build', '--locked', '--release', '--no-default-features', '-p', 'xodus-cli', '-p', 'xodus-service'], {
         cwd: staging,
-        env: { ...process.env, CARGO_TARGET_DIR: target },
+        env: { ...process.env, CARGO_TARGET_DIR: target, ...await this.lockedToolchain() },
         onLine: log,
         maxOutput: 5_000_000,
       });
@@ -253,12 +314,17 @@ export class BackendManager {
       await fs.writeFile(path.join(releaseDir, 'metadata.json'), JSON.stringify({ commit, builtAt: new Date().toISOString(), capabilities, linuxRunPatch: LINUX_RUN_PATCH }, null, 2));
       const pointer: ManagedPointer = { commit, binaryPath: managedCli, builtAt: new Date().toISOString(), linuxRunPatch: LINUX_RUN_PATCH,
         recipeSha256: backendRecipeSha256, version: backendLock.version, delivery: 'local' };
+      const previous = await this.readPointer();
+      if (previous && previous.binaryPath !== managedCli && await this.validate(previous.binaryPath)) {
+        await fs.writeFile(this.previousPointerFile, JSON.stringify(previous, null, 2));
+      }
       const pointerTmp = `${this.pointerFile}.tmp`;
       await fs.writeFile(pointerTmp, JSON.stringify(pointer, null, 2));
       await fs.rename(pointerTmp, this.pointerFile);
       Object.assign(this.status, {
         available: true, source: 'managed', binaryPath: managedCli, commit,
         upstreamCommit: commit, updateAvailable: false, capabilities, linuxRunPatch: LINUX_RUN_PATCH,
+        version: backendLock.version, delivery: 'local', previousAvailable: await this.previousAvailable(),
       });
       log('The new backend passed validation and was activated atomically. Older builds were preserved.');
     } catch (error) {

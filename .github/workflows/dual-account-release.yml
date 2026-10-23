@@ -5,7 +5,8 @@ name: Dual-account release
 on:
   push:
     branches: [dual-account]
-    paths-ignore: ['docs/**', '**/*.md', '.github/ISSUE_TEMPLATE/**']
+    # Only changes that alter the AppImage publish a release (not CI or docs).
+    paths: ['src/**', 'assets/**', 'scripts/**', 'build/**', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig*.json']
   workflow_dispatch:
 
 permissions:

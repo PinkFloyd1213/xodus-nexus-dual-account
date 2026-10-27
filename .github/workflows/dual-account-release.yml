@@ -63,6 +63,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           image="release/Xodus-Nexus-${VERSION}-x86_64.AppImage"
-          gh release create "v${VERSION}" "$image" "$image.sha512sum" \
+          gh release create -R "$GITHUB_REPOSITORY" "v${VERSION}" "$image" "$image.sha512sum" \
             --target "$GITHUB_SHA" --title "Xodus Nexus ${VERSION} (dual account)" \
             --notes "Built from ${GITHUB_SHA} on branch dual-account. Backend recipe: $(node -p 'require("./assets/backend-source.lock.json").patchId')."

@@ -1,8 +1,8 @@
 import { spawnTracked } from './process.js';
 import { parseXboxFriends, parseXboxConversation, parseXboxMessageReceipt, xboxMessageText, xboxUserId, xboxSocialErrors, type SocialRequest, type XboxConversation, type XboxFriend, type XboxMessageReceipt } from '../shared/social.js';
 
-type Identity = { account: string; binary: string };
-type Reader = (binary: string, request: SocialRequest, signal: AbortSignal) => Promise<string>;
+type Identity = { account: string; binary: string; play?: boolean };
+type Reader = (binary: string, request: SocialRequest, signal: AbortSignal, play?: boolean) => Promise<string>;
 const failures: Record<string,string> = {
   'privacy-or-access-denied':'Xbox denied this request. Check your account privacy and communication permissions.',
   'sign-in-required':'Xbox requires sign-in again. Open Settings to check your account.',
@@ -18,10 +18,11 @@ const uiErrors = new Set([...Object.values(failures),...Object.values(xboxSocial
   'Invalid friends response.', 'Invalid conversation response.',
   'Xbox response does not match the signed-in account.',
 ]);
-async function command(binary: string, request: SocialRequest, signal: AbortSignal): Promise<string> {
+async function command(binary: string, request: SocialRequest, signal: AbortSignal, play = false): Promise<string> {
   signal.throwIfAborted();
   // Never put message bodies, friends or tokens in command lines or diagnostics.
-  const tracked=spawnTracked(binary,['social','--json'],{maxOutput:2*1024*1024,stdoutOnly:true});
+  // Dual-account backends: friends and chat belong to the in-game (play) account.
+  const tracked=spawnTracked(binary,['social','--json',...(play?['--account','play']:[])],{maxOutput:2*1024*1024,stdoutOnly:true});
   const stop=()=>{tracked.child.kill('SIGKILL');};
   signal.addEventListener('abort',stop,{once:true});if(signal.aborted)stop();
   const timer=setTimeout(stop,65_000);timer.unref();
@@ -109,7 +110,7 @@ export class XboxSocial {
     const controller=new AbortController(),generation=this.generation;
     const result=(async()=>{
       try{
-        const output=await this.reader(identity.binary,request,controller.signal);
+        const output=await this.reader(identity.binary,request,controller.signal,identity.play);
         const current=this.identity();
         if(controller.signal.aborted||generation!==this.generation||current?.account!==identity.account||current.binary!==identity.binary)
           throw Error('The account or backend changed. Open Friends again.');

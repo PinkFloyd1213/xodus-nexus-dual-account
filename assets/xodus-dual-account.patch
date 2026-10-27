@@ -1,0 +1,1034 @@
+diff --git a/crates/xodus-cli/src/commands.rs b/crates/xodus-cli/src/commands.rs
+index 1e0e96d2a6126124578feee8ac6b945dc5a2c97c..434efe6284c9456d1ee3be9dfd72ed5df5eb0d4a 100644
+--- a/crates/xodus-cli/src/commands.rs
++++ b/crates/xodus-cli/src/commands.rs
+@@ -1,3 +1,4 @@
++pub mod account;
+ pub mod clep;
+ pub mod download;
+ pub mod extract;
+diff --git a/crates/xodus-cli/src/commands/account.rs b/crates/xodus-cli/src/commands/account.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b7c5d73d95e0a7521ad656d7b8a164bfbeaa5ed
+--- /dev/null
++++ b/crates/xodus-cli/src/commands/account.rs
+@@ -0,0 +1,42 @@
++//! `account --account play`: which account a game would run as. The default
++//! `account` output stays in main.rs, unchanged for existing launchers.
++use std::process::ExitCode;
++
++use serde_json::json;
++use xodus::tokens::store::TokenStoreError;
++use xodus::tokens::{AccountRole, TokenManager};
++
++/// Same `stored`/`username` fields as the store output, plus the role actually
++/// used and whether play falls back to the store account.
++pub fn play(tokens: &TokenManager, json_output: bool) -> ExitCode {
++    let resolved = tokens.resolve(AccountRole::Play);
++    let role = resolved
++        .as_ref()
++        .map_or(AccountRole::Play, TokenManager::role);
++    let fallback = role != AccountRole::Play;
++    let mut value = json!({ "role": role.as_str(), "fallback": fallback });
++    match resolved.and_then(|tokens| tokens.get_user()) {
++        Ok(user) => {
++            value["stored"] = true.into();
++            if !json_output {
++                let source = if fallback { "store fallback" } else { "play" };
++                println!("{} ({source})", user.username);
++            }
++            value["username"] = user.username.into();
++        }
++        Err(TokenStoreError::NotFound) => {
++            value["stored"] = false.into();
++            if !json_output {
++                println!("No stored Microsoft account");
++            }
++        }
++        Err(error) => {
++            eprintln!("Unable to read the stored account: {error}");
++            return ExitCode::FAILURE;
++        }
++    }
++    if json_output {
++        println!("{value}");
++    }
++    ExitCode::SUCCESS
++}
+diff --git a/crates/xodus-cli/src/commands/game_activity.rs b/crates/xodus-cli/src/commands/game_activity.rs
+index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df8519f6d86d 100644
+--- a/crates/xodus-cli/src/commands/game_activity.rs
++++ b/crates/xodus-cli/src/commands/game_activity.rs
+@@ -24,7 +24,9 @@ fn minutes(value: &Value, xuid: &str, title_id: u32) -> Result<Option<f64>, &'st
+             for stat in list["stats"].as_array().ok_or("stats-shape")? {
+                 if stat["name"].as_str() != Some("MinutesPlayed") { continue; }
+                 if stat["xuid"].as_str() != Some(xuid) { return Err("stats-user"); }
+-                let raw = stat["value"].as_str().ok_or("stats-value")?;
++                // A title with no recorded play time omits the value: no data, not an error.
++                let Some(raw) = stat.get("value").filter(|value| !value.is_null()) else { continue; };
++                let raw = raw.as_str().ok_or("stats-value")?;
+                 if raw.is_empty() || raw.len() > 32 || !raw.bytes().all(|c| c.is_ascii_digit() || c == b'.') { return Err("stats-value"); }
+                 let n = raw.parse::<f64>().map_err(|_| "stats-value")?;
+                 if !n.is_finite() || !(0.0..=1_000_000_000.0).contains(&n) { return Err("stats-range"); }
+@@ -58,6 +60,11 @@ fn last_played(value: &Value, xuid: &str, title_id: u32) -> Result<Option<String
+     Ok(date.filter(|s| (20..=40).contains(&s.len()) && s.is_ascii() && !s.chars().any(char::is_control)).map(str::to_owned))
+ }
+ 
++/// Static stage + HTTP status only (0 when unknown), never a response or account.
++fn diagnostic(kind: &str, (stage, status): (&str, u16)) {
++    eprintln!("NEXUS_ACTIVITY_DIAGNOSTIC_V1 {kind}-{stage} {status}");
++}
++
+ async fn lookup(tokens: &TokenManager, title_id: u32) -> Result<Value, &'static str> {
+     let (client, authorization, account) = xbox_session(tokens).await?;
+     let response = client.get("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag")
+@@ -71,18 +78,27 @@ async fn lookup(tokens: &TokenManager, title_id: u32) -> Result<Value, &'static
+     let stats = async {
+         let response = client.post("https://userstats.xboxlive.com/batch")
+             .header("Authorization", &authorization).header("x-xbl-contract-version", "2")
+-            .json(&body).send().await.map_err(|_| "stats-request")?;
+-        let bytes = bounded(response, 256 * 1024).await?;
+-        minutes(&serde_json::from_slice(&bytes).map_err(|_| "stats-json")?, &xuid, title_id)
++            .json(&body).send().await.map_err(|_| ("request", 0))?;
++        let status = response.status().as_u16();
++        let bytes = bounded(response, 256 * 1024).await.map_err(|stage| (stage, status))?;
++        let value = serde_json::from_slice(&bytes).map_err(|_| ("json", status))?;
++        minutes(&value, &xuid, title_id).map_err(|stage| (stage, status))
+     };
+     let history = async {
+-        let response = client.get(format!("https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleid({title_id})/decoration/detail"))
++        // Only the titlehistory decoration fills titleHistory; detail leaves it null.
++        let response = client.get(format!("https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleid({title_id})/decoration/titlehistory"))
+             .header("Authorization", &authorization).header("x-xbl-contract-version", "2")
+-            .send().await.map_err(|_| "title-request")?;
+-        let bytes = bounded(response, 256 * 1024).await?;
+-        last_played(&serde_json::from_slice(&bytes).map_err(|_| "title-json")?, &xuid, title_id)
++            // Titlehub answers 400 Bad Request without a language.
++            .header("Accept-Language", "en-US")
++            .send().await.map_err(|_| ("request", 0))?;
++        let status = response.status().as_u16();
++        let bytes = bounded(response, 256 * 1024).await.map_err(|stage| (stage, status))?;
++        let value = serde_json::from_slice(&bytes).map_err(|_| ("json", status))?;
++        last_played(&value, &xuid, title_id).map_err(|stage| (stage, status))
+     };
+     let (played, history) = tokio::join!(stats, history);
++    if let Err(error) = played { diagnostic("stats", error); }
++    if let Err(error) = history { diagnostic("title", error); }
+     // One unavailable statistic must not hide the other. Do not invent zero.
+     let (played_ok, history_ok) = (played.is_ok(), history.is_ok());
+     if !played_ok && !history_ok { return Err("activity-unavailable"); }
+@@ -116,6 +132,14 @@ mod tests {
+         assert_eq!(minutes(&grouped, "123", 42).unwrap(), Some(2052.0));
+     }
+     #[test]
++    fn activity_treats_a_stat_without_value_as_no_data() {
++        let stat = |extra: Value| { let mut s = json!({"name":"MinutesPlayed","xuid":"123"}); s.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone()); s };
++        for stat in [stat(json!({})), stat(json!({"value": null}))] {
++            let lists = json!({"statlistscollection":[{"arrangebyfield":"xuid","arrangebyfieldid":"123","stats":[stat]}]});
++            assert_eq!(minutes(&lists, "123", 42).unwrap(), None);
++        }
++    }
++    #[test]
+     fn activity_distinguishes_missing_from_real_zero_and_fractions() {
+         assert_eq!(minutes(&json!({"statlistscollection":[]}), "123", 42).unwrap(), None);
+         for (raw, n) in [("0",0.0),("0.5",0.5)] { assert_eq!(minutes(&json!({"statlistscollection":[list(json!(raw))]}),"123",42).unwrap(),Some(n)); }
+diff --git a/crates/xodus-cli/src/commands/login.rs b/crates/xodus-cli/src/commands/login.rs
+index e28daff846f89f0e4259945a360356510415c5c1..16a9106b10f42a81209c08a704698b41834ef651 100644
+--- a/crates/xodus-cli/src/commands/login.rs
++++ b/crates/xodus-cli/src/commands/login.rs
+@@ -2,7 +2,7 @@ use std::process::ExitCode;
+ 
+ use xodus::models::live::{DAProperty, ExchangeUserTokenOutcome};
+ use xodus::models::{secrets, soap};
+-use xodus::tokens::TokenManager;
++use xodus::tokens::{AccountRole, TokenManager};
+ 
+ use crate::webview;
+ 
+@@ -11,7 +11,10 @@ const LOGIN_MARKET: &str = "en-US";
+ const USER_AUTH_SCOPE: &str = "scope=service::user.auth.xboxlive.com::MBI_SSL&api-version=2.0";
+ 
+ pub async fn run(client: &reqwest::Client, tokens: &TokenManager) -> ExitCode {
+-    super::subscription::clear();
++    // The membership cache belongs to the store account only.
++    if tokens.role() == AccountRole::Store {
++        super::subscription::clear();
++    }
+     let token = match tokens.get_device_sts_token() {
+         Ok(token) => token,
+         Err(error) => {
+diff --git a/crates/xodus-cli/src/commands/logout.rs b/crates/xodus-cli/src/commands/logout.rs
+index 2c4fe4bd774ee086482d6511bea8c9981cc1d178..532f7ec28389dc01b624f8f7c3be35ed7ede2077 100644
+--- a/crates/xodus-cli/src/commands/logout.rs
++++ b/crates/xodus-cli/src/commands/logout.rs
+@@ -1,8 +1,26 @@
+ use std::process::ExitCode;
+-use xodus::tokens::TokenManager;
++use xodus::tokens::{AccountRole, TokenManager};
+ 
+ pub async fn run(tokens: &TokenManager, device: bool) -> ExitCode {
+-    super::subscription::clear();
++    // A play logout keeps the store account, device and membership cache.
++    if tokens.role() == AccountRole::Play {
++        if device {
++            eprintln!("--device cannot be combined with --account play");
++            return ExitCode::FAILURE;
++        }
++    } else {
++        super::subscription::clear();
++        // A device reset invalidates every account bound to that device, so a
++        // full sign-out also removes the play account.
++        if device
++            && tokens
++                .for_role(AccountRole::Play)
++                .remove_persistent()
++                .is_err()
++        {
++            return ExitCode::FAILURE;
++        }
++    }
+     if device && tokens.remove_device_license().is_err() {
+         return ExitCode::FAILURE;
+     }
+@@ -14,3 +32,68 @@ pub async fn run(tokens: &TokenManager, device: bool) -> ExitCode {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::HashMap;
++    use xodus::models::secrets::{Device, Token, User};
++    use xodus::tokens::PASSPORT_STS;
++
++    fn sign_in(tokens: &TokenManager, name: &str) {
++        let user = User {
++            puid: format!("{name}-puid"),
++            username: format!("{name}@example.test"),
++        };
++        let issued = HashMap::from([(
++            PASSPORT_STS.to_string(),
++            Token::Compact(format!("{name}-sts")),
++        )]);
++        tokens.save_user_session(user, issued).unwrap();
++    }
++
++    fn setup() -> TokenManager {
++        let tokens = TokenManager::with_memory();
++        tokens
++            .save_device_license(&Device {
++                puid: "synthetic".into(),
++                hwid: "synthetic".into(),
++                device_id: "synthetic".into(),
++                password: "synthetic".into(),
++                username: "synthetic".into(),
++                splicense: "synthetic".into(),
++            })
++            .unwrap();
++        sign_in(&tokens, "store");
++        sign_in(&tokens.for_role(AccountRole::Play), "play");
++        tokens
++    }
++
++    #[tokio::test]
++    async fn device_reset_signs_out_both_accounts() {
++        let tokens = setup();
++        assert_eq!(run(&tokens, true).await, ExitCode::SUCCESS);
++        assert!(tokens.get_device_license().is_err());
++        assert!(!tokens.has_user().unwrap());
++        assert!(!tokens.for_role(AccountRole::Play).has_user().unwrap());
++    }
++
++    #[tokio::test]
++    async fn plain_store_logout_keeps_play_and_play_logout_keeps_store() {
++        let tokens = setup();
++        assert_eq!(run(&tokens, false).await, ExitCode::SUCCESS);
++        assert!(tokens.get_device_license().is_ok());
++        assert!(tokens.for_role(AccountRole::Play).has_user().unwrap());
++        let tokens = setup();
++        assert_eq!(
++            run(&tokens.for_role(AccountRole::Play), false).await,
++            ExitCode::SUCCESS
++        );
++        assert!(tokens.has_user().unwrap());
++        assert!(!tokens.for_role(AccountRole::Play).has_user().unwrap());
++        assert_eq!(
++            run(&tokens.for_role(AccountRole::Play), true).await,
++            ExitCode::FAILURE
++        );
++    }
++}
+diff --git a/crates/xodus-cli/src/commands/profile.rs b/crates/xodus-cli/src/commands/profile.rs
+index 2f8a2a9c6c3a872a206e369626da6a994522d731..7b3055224c645e93886c17568b42d0c0f20e8c71 100644
+--- a/crates/xodus-cli/src/commands/profile.rs
++++ b/crates/xodus-cli/src/commands/profile.rs
+@@ -2,7 +2,7 @@
+ use std::{process::ExitCode, time::Duration};
+ use base64::{Engine, prelude::BASE64_STANDARD};
+ use serde_json::{Value, json};
+-use xodus::{models::{live::ExchangeUserTokenOutcome, secrets::Token, soap}, tokens::TokenManager};
++use xodus::{models::{live::ExchangeUserTokenOutcome, secrets::Token, soap}, tokens::{AccountRole, TokenManager}};
+ 
+ const PROFILE: &str = "https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,PublicGamerpic";
+ const MAX_IMAGE: usize = 2 * 1024 * 1024;
+@@ -91,9 +91,12 @@ async fn profile(tokens: &TokenManager) -> Result<Value, &'static str> {
+ 
+ pub async fn run(tokens: &TokenManager, json_output: bool) -> ExitCode {
+     let account = tokens.get_user().ok().map(|user|user.username);
++    // Membership always belongs to the store account, even for a play profile.
++    let store = tokens.for_role(AccountRole::Store);
++    let store_account = store.get_user().ok().map(|user|user.username);
+     let membership = async {
+-        match account.as_deref() {
+-            Some(account) => super::subscription::lookup(tokens, account).await,
++        match store_account.as_deref() {
++            Some(store_account) => super::subscription::lookup(&store, store_account).await,
+             None => json!({"status":"unknown"}),
+         }
+     };
+diff --git a/crates/xodus-cli/src/commands/run.rs b/crates/xodus-cli/src/commands/run.rs
+index 1ec9cb9c16d4ce2924bdc49adf971b5c53b8a4cc..5ec748a2d5d16ad10dd7a0f24255774bf8a82b41 100644
+--- a/crates/xodus-cli/src/commands/run.rs
++++ b/crates/xodus-cli/src/commands/run.rs
+@@ -18,13 +18,16 @@ use tempfile::{tempdir, tempfile, tempfile_in};
+ use tokio::fs::{File, OpenOptions};
+ use tokio::process::Command;
+ use xodus::models::secrets::Token;
+-use xodus::tokens::TokenManager;
++use xodus::tokens::{AccountRole, TokenManager};
+ 
+ use crate::license::get_license;
+ 
+ const PLAYFAB_RELYING_PARTY: &str = "http://playfab.xboxlive.com/";
+ 
+ async fn playfab_auth_header(client: &reqwest::Client, tokens: &TokenManager) -> Option<String> {
++    // PlayFab identifies the player: use the play account, falling back to store.
++    let tokens = tokens.resolve(AccountRole::Play).ok()?;
++    tracing::info!(role = tokens.role().as_str(), "Requesting PlayFab XSTS");
+     let Ok(Token::Legacy(dev_token)) = tokens.get_device_sts_token() else {
+         return None;
+     };
+diff --git a/crates/xodus-cli/src/main.rs b/crates/xodus-cli/src/main.rs
+index ea6f6d93af599018ca1eed1b6e6a8f2664565500..84b3e8754bddf5645a3ccdae034e71eae93c92e5 100644
+--- a/crates/xodus-cli/src/main.rs
++++ b/crates/xodus-cli/src/main.rs
+@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
+ use tracing_subscriber::Layer;
+ use tracing_subscriber::layer::SubscriberExt;
+ use tracing_subscriber::util::SubscriberInitExt;
+-use xodus::tokens::TokenManager;
++use xodus::tokens::{AccountRole, TokenManager};
+ 
+ mod commands;
+ mod license;
+@@ -16,6 +16,21 @@ mod webview;
+ #[path = "webview_stdio.rs"]
+ mod webview;
+ 
++#[derive(Clone, Copy, clap::ValueEnum)]
++enum AccountArg {
++    Store,
++    Play,
++}
++
++impl From<AccountArg> for AccountRole {
++    fn from(account: AccountArg) -> Self {
++        match account {
++            AccountArg::Store => AccountRole::Store,
++            AccountArg::Play => AccountRole::Play,
++        }
++    }
++}
++
+ #[derive(Subcommand)]
+ enum SubCommand {
+     #[cfg(target_os = "linux")]
+@@ -87,28 +102,63 @@ enum SubCommand {
+     Account {
+         #[arg(long, default_value_t = false)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Read Xbox gamertag and gamerpic for the stored account")]
+     Profile {
+         #[arg(long, default_value_t = false)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Explicit Xbox friends and text chat, JSON request on standard input")]
+     Social {
+         #[arg(long, required = true)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Read Xbox time played and last activity for one title without starting sign-in")]
+     GameActivity {
+         title_id: u32,
+         #[arg(long)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Read achievements for one Xbox title without signing in or unlocking anything")]
+     Achievements {
+         title_id: u32,
+         #[arg(long)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Read account product entitlements without starting sign-in")]
+     Library {
+@@ -117,10 +167,25 @@ enum SubCommand {
+         #[arg(long, default_value = "US")]
+         market: String,
+     },
+-    Login,
++    Login {
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role to sign in: store (licenses) or play (in-game identity)"
++        )]
++        account: AccountArg,
++    },
+     Logout {
+         #[arg(long, default_value_t = false, help = "Remove device license")]
+         device: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role to remove; play removes only the play account"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Download and extract the game through streaming algorithm")]
+     Streaming {
+@@ -335,7 +400,11 @@ async fn main() -> ExitCode {
+             .await
+         }
+         SubCommand::Library { json, market } => commands::library::run(&tokens, json, market).await,
+-        SubCommand::Account { json } => match tokens.get_user() {
++        SubCommand::Account {
++            json,
++            account: AccountArg::Play,
++        } => commands::account::play(&tokens, json),
++        SubCommand::Account { json, .. } => match tokens.get_user() {
+             Ok(user) => {
+                 if json {
+                     println!(
+@@ -363,12 +432,49 @@ async fn main() -> ExitCode {
+                 ExitCode::FAILURE
+             }
+         },
+-        SubCommand::Profile { json } => commands::profile::run(&tokens, json).await,
+-        SubCommand::Social { .. } => commands::social::run(&tokens).await,
+-        SubCommand::GameActivity { title_id, json } => commands::game_activity::run(&tokens, title_id, json).await,
+-        SubCommand::Achievements { title_id, json } => commands::achievements::run(&tokens, title_id, json).await,
+-        SubCommand::Login => commands::login::run(&client, &tokens).await,
+-        SubCommand::Logout { device } => commands::logout::run(&tokens, device).await,
++        SubCommand::Profile { json, account } => match tokens.resolve(account.into()) {
++            Ok(tokens) => commands::profile::run(&tokens, json).await,
++            Err(error) => {
++                error.report();
++                ExitCode::FAILURE
++            }
++        },
++        SubCommand::Social { account, .. } => match tokens.resolve(account.into()) {
++            Ok(tokens) => commands::social::run(&tokens).await,
++            Err(error) => {
++                error.report();
++                ExitCode::FAILURE
++            }
++        },
++        SubCommand::GameActivity {
++            title_id,
++            json,
++            account,
++        } => match tokens.resolve(account.into()) {
++            Ok(tokens) => commands::game_activity::run(&tokens, title_id, json).await,
++            Err(error) => {
++                error.report();
++                ExitCode::FAILURE
++            }
++        },
++        SubCommand::Achievements {
++            title_id,
++            json,
++            account,
++        } => match tokens.resolve(account.into()) {
++            Ok(tokens) => commands::achievements::run(&tokens, title_id, json).await,
++            Err(error) => {
++                error.report();
++                ExitCode::FAILURE
++            }
++        },
++        // Sign-in and sign-out target exactly the requested role, never a fallback.
++        SubCommand::Login { account } => {
++            commands::login::run(&client, &tokens.for_role(account.into())).await
++        }
++        SubCommand::Logout { device, account } => {
++            commands::logout::run(&tokens.for_role(account.into()), device).await
++        }
+         SubCommand::Extract {
+             path,
+             destination,
+diff --git a/crates/xodus-service/src/account_metadata.rs b/crates/xodus-service/src/account_metadata.rs
+index a1222965c6db8de56b17574fbbdf163134d99edb..7d507f3e7e61fd803cfe450508732e9a0a2aef0f 100644
+--- a/crates/xodus-service/src/account_metadata.rs
++++ b/crates/xodus-service/src/account_metadata.rs
+@@ -19,8 +19,32 @@ pub fn bound_ids(ticket: Option<&User>, store: Option<&User>) -> (Option<String>
+     (Some(xbox), Some(store_id))
+ }
+ 
++/// Dual-account (store/play): the Xbox id comes from the play session that
++/// issued the ticket, checked against a re-read of that same session; the Store
++/// id from the store session. As on Windows, the two accounts may differ. With
++/// no play account both sessions are the store one, so this equals `bound_ids`.
++pub fn bound_ids_for_roles(ticket: Option<&User>, current: Option<&User>, store: Option<&User>) -> (Option<String>, Option<String>) {
++    let (Some(xbox), _) = bound_ids(ticket, current) else { return (None, None) };
++    let Some(store_id) = store.and_then(|store| account_id(&store.puid)) else { return (None, None) };
++    (Some(xbox), Some(store_id))
++}
++
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn account_metadata_pairs_play_and_store_like_windows() {
++        let play = user("0123456789ABCDEF");
++        let store = User { puid: "fedcba9876543210".into(), username: "store@example.invalid".into() };
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), Some(&store)),
++            (Some("0123456789abcdef".into()), Some("fedcba9876543210".into())));
++        // Single account (play falls back to store): identical to bound_ids.
++        assert_eq!(bound_ids_for_roles(Some(&store), Some(&store), Some(&store)), bound_ids(Some(&store), Some(&store)));
++        // The play session changed during the exchange, or a session is missing.
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&store), Some(&store)), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), None, Some(&store)), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), None), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), Some(&user("0000000000000000"))), (None, None));
++    }
+     use super::*;
+     fn user(puid: &str) -> User { User { puid: puid.into(), username: "synthetic@example.invalid".into() } }
+     #[test]
+diff --git a/crates/xodus-service/src/connection/xml.rs b/crates/xodus-service/src/connection/xml.rs
+index e0094837095caeea4b7ebb8fc8af84d37fab8e63..9a1753975beaec42b1a91313033bf5ab28fdade8 100644
+--- a/crates/xodus-service/src/connection/xml.rs
++++ b/crates/xodus-service/src/connection/xml.rs
+@@ -4,6 +4,7 @@ use xodus::models::secrets::Token;
+ use xodus::models::soap;
+ use xodus::models::xgameruntime::xuser::{MSATokenRequest, MSATokenResponse};
+ use xodus::proto::xodus::XodusMessageType;
++use xodus::tokens::AccountRole;
+ 
+ use crate::XML_MAGIC;
+ use crate::simple_context::SimpleContext;
+@@ -33,11 +34,36 @@ pub async fn handle(
+     socket.write_all(&data).await
+ }
+ 
++/// Account each request is issued for: the game's own identity uses the play
++/// account (falling back to store), Store licensing and packages use store.
++pub fn message_role(message_type: XodusMessageType) -> Option<AccountRole> {
++    match message_type {
++        XodusMessageType::MsaTokenRequest => Some(AccountRole::Play),
++        XodusMessageType::StoreLicenseTokenRequest
++        | XodusMessageType::StorePackageUpdatesRequest => Some(AccountRole::Store),
++        _ => None,
++    }
++}
++
+ pub async fn parse_message(
+     context: &mut SimpleContext,
+     message_type: XodusMessageType,
+     buffer: Vec<u8>,
+ ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
++    let tokens = match message_role(message_type) {
++        Some(requested) => {
++            let tokens = context.tokens().resolve(requested)?;
++            // Role names only: never account identifiers or token material.
++            tracing::info!(
++                request = ?message_type,
++                role = tokens.role().as_str(),
++                fallback = tokens.role() != requested,
++                "Issuing credentials"
++            );
++            Some(tokens)
++        }
++        None => None,
++    };
+     match message_type {
+         XodusMessageType::Ping => Ok(buffer),
+         XodusMessageType::StorePackageUpdatesRequest => {
+@@ -54,10 +80,11 @@ pub async fn parse_message(
+             let string_buf = std::str::from_utf8(&buffer)?;
+             tracing::debug!("String buffer: {string_buf:?}");
+             let req = quick_xml::de::from_str::<MSATokenRequest>(string_buf)?;
+-            let identity_session = context.tokens().get_user_sts_session()?;
++            let tokens = tokens.ok_or(xodus::models::secrets::InvalidTokenResponse)?;
++            let identity_session = tokens.get_user_sts_session()?;
+             let request_token = match &identity_session {
+                 Some((_, token)) => token.clone(),
+-                None => context.tokens().get_user_sts_token()?,
++                None => tokens.get_user_sts_token()?,
+             };
+             let Token::Legacy(token) = request_token else {
+                 return Ok(vec![]);
+@@ -117,7 +144,8 @@ pub async fn parse_message(
+                         } else {
+                             address
+                         };
+-                        if let Err(err) = context.tokens().save_user_token(address, sts) {
++                        // Persist into the role that issued it, never another account.
++                        if let Err(err) = tokens.save_user_token(address, sts) {
+                             tracing::warn!("Failed to persist refreshed STS token: {err}");
+                         }
+                     }
+@@ -127,13 +155,15 @@ pub async fn parse_message(
+                     let Token::Compact(user_token) = token else {
+                         return Ok(vec![]);
+                     };
+-                    // Store licensing uses this same session facade. Bind the
+-                    // Xbox ticket's MSA principal to its current Store account,
+-                    // never infer either account identifier from an Xbox XUID.
+-                    let current_identity = context.tokens().get_user_sts_session().ok().flatten();
+-                    let (xbox_msa_account_id, store_msa_account_id) = crate::account_metadata::bound_ids(
++                    // Bind the Xbox ticket's MSA principal to its own (play) session,
++                    // re-read to reject a change mid-exchange, and the Store id to
++                    // the store session; never infer either from an Xbox XUID.
++                    let current_identity = tokens.get_user_sts_session().ok().flatten();
++                    let store_identity = context.tokens().get_user_sts_session().ok().flatten();
++                    let (xbox_msa_account_id, store_msa_account_id) = crate::account_metadata::bound_ids_for_roles(
+                         identity_session.as_ref().map(|(user, _)| user),
+-                        current_identity.as_ref().map(|(user, _)| user));
++                        current_identity.as_ref().map(|(user, _)| user),
++                        store_identity.as_ref().map(|(user, _)| user));
+                     let payload = MSATokenResponse {
+                         token: user_token,
+                         expiry: expiry.timestamp(),
+@@ -153,3 +183,25 @@ pub async fn parse_message(
+         _ => Err("Unimplemented".into()),
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn store_and_play_message_roles() {
++        assert_eq!(
++            message_role(XodusMessageType::MsaTokenRequest),
++            Some(AccountRole::Play)
++        );
++        for message in [
++            XodusMessageType::StoreLicenseTokenRequest,
++            XodusMessageType::StorePackageUpdatesRequest,
++        ] {
++            assert_eq!(message_role(message), Some(AccountRole::Store));
++        }
++        for message in [XodusMessageType::Ping, XodusMessageType::Unknown] {
++            assert_eq!(message_role(message), None);
++        }
++    }
++}
+diff --git a/crates/xodus/src/tokens.rs b/crates/xodus/src/tokens.rs
+index 092315aaf9d1da02a5949c1cf55b387528b67f26..c16d4e2fd2cb9d371e4b61f4b26c8effdf51b674 100644
+--- a/crates/xodus/src/tokens.rs
++++ b/crates/xodus/src/tokens.rs
+@@ -4,7 +4,9 @@ pub mod manager;
+ pub mod store;
+ pub mod session;
+ 
+-pub use manager::{PASSPORT_STS, TokenManager};
++pub use manager::{AccountRole, PASSPORT_STS, TokenManager};
+ 
+ #[cfg(test)]
+ mod credential_tests;
++#[cfg(test)]
++mod dual_account_tests;
+diff --git a/crates/xodus/src/tokens/dual_account_tests.rs b/crates/xodus/src/tokens/dual_account_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d75dda91f5f21cad8377ed03e4b86a3c2f7ffef
+--- /dev/null
++++ b/crates/xodus/src/tokens/dual_account_tests.rs
+@@ -0,0 +1,160 @@
++//! Store/play account roles. Synthetic credentials and in-memory storage only.
++use super::{
++    backend::MemoryBackend,
++    manager::{AccountRole, PASSPORT_STS, TokenManager},
++    store::{TokenBackend, TokenStoreError},
++};
++use crate::models::secrets::{Token, User};
++use std::{collections::HashMap, sync::Arc};
++
++fn setup() -> (Arc<MemoryBackend>, TokenManager) {
++    let backend = Arc::new(MemoryBackend::default());
++    let manager = TokenManager::new(backend.clone(), Arc::new(MemoryBackend::default()));
++    (backend, manager)
++}
++
++fn sign_in(manager: &TokenManager, name: &str) {
++    let user = User {
++        puid: format!("{name}-puid"),
++        username: format!("{name}@example.test"),
++    };
++    let tokens = HashMap::from([(
++        PASSPORT_STS.to_string(),
++        Token::Compact(format!("{name}-sts")),
++    )]);
++    manager.save_user_session(user, tokens).unwrap();
++}
++
++fn sts(manager: &TokenManager) -> String {
++    match manager.get_user_sts_token().unwrap() {
++        Token::Compact(value) => value,
++        Token::Legacy(_) => panic!("unexpected token kind"),
++    }
++}
++
++#[test]
++fn credential_dual_account_default_role_keeps_historical_keys() {
++    let (backend, manager) = setup();
++    assert_eq!(manager.role(), AccountRole::Store);
++    sign_in(&manager, "store");
++    assert!(backend.get("user-session").unwrap().is_some());
++    assert!(backend.get("play/user-session").unwrap().is_none());
++}
++
++#[test]
++fn credential_dual_account_roles_are_isolated() {
++    let (backend, manager) = setup();
++    sign_in(&manager, "store");
++    sign_in(&manager.for_role(AccountRole::Play), "play");
++    assert!(backend.get("play/user-session").unwrap().is_some());
++    assert_eq!(manager.get_user().unwrap().username, "store@example.test");
++    assert_eq!(sts(&manager), "store-sts");
++    let play = manager.for_role(AccountRole::Play);
++    assert_eq!(play.get_user().unwrap().username, "play@example.test");
++    assert_eq!(sts(&play), "play-sts");
++}
++
++#[test]
++fn credential_dual_account_play_falls_back_to_store() {
++    let (_, manager) = setup();
++    sign_in(&manager, "store");
++    assert!(!manager.for_role(AccountRole::Play).has_user().unwrap());
++    let resolved = manager.resolve(AccountRole::Play).unwrap();
++    assert_eq!(resolved.role(), AccountRole::Store);
++    assert_eq!(resolved.get_user().unwrap().username, "store@example.test");
++    assert_eq!(sts(&resolved), "store-sts");
++
++    sign_in(&manager.for_role(AccountRole::Play), "play");
++    let resolved = manager.resolve(AccountRole::Play).unwrap();
++    assert_eq!(resolved.role(), AccountRole::Play);
++    assert_eq!(resolved.get_user().unwrap().username, "play@example.test");
++    // Store requests never fall forward to the play account.
++    assert_eq!(
++        manager.resolve(AccountRole::Store).unwrap().role(),
++        AccountRole::Store
++    );
++}
++
++#[test]
++fn credential_dual_account_fallback_reads_legacy_store_entries() {
++    let (_, manager) = setup();
++    manager
++        .save_user(&User {
++            puid: "legacy-puid".into(),
++            username: "legacy@example.test".into(),
++        })
++        .unwrap();
++    manager
++        .save_user_token(PASSPORT_STS.into(), Token::Compact("legacy-sts".into()))
++        .unwrap();
++    let resolved = manager.resolve(AccountRole::Play).unwrap();
++    assert_eq!(resolved.role(), AccountRole::Store);
++    assert_eq!(sts(&resolved), "legacy-sts");
++}
++
++#[test]
++fn credential_dual_account_play_logout_keeps_store_and_device() {
++    let (backend, manager) = setup();
++    manager
++        .save_device_token(PASSPORT_STS.into(), Token::Compact("device-sts".into()))
++        .unwrap();
++    sign_in(&manager, "store");
++    let play = manager.for_role(AccountRole::Play);
++    sign_in(&play, "play");
++    play.remove_persistent().unwrap();
++    assert!(!play.has_user().unwrap());
++    assert!(backend.get("play/user-session").unwrap().is_none());
++    assert_eq!(manager.get_user().unwrap().username, "store@example.test");
++    assert!(manager.get_device_sts_token().is_ok());
++    assert_eq!(
++        manager.resolve(AccountRole::Play).unwrap().role(),
++        AccountRole::Store
++    );
++}
++
++#[test]
++fn credential_dual_account_store_logout_keeps_play() {
++    let (_, manager) = setup();
++    manager
++        .save_device_token(PASSPORT_STS.into(), Token::Compact("device-sts".into()))
++        .unwrap();
++    sign_in(&manager, "store");
++    sign_in(&manager.for_role(AccountRole::Play), "play");
++    manager.remove_persistent().unwrap();
++    assert!(matches!(manager.get_user(), Err(TokenStoreError::NotFound)));
++    assert!(manager.get_device_sts_token().is_err());
++    let play = manager.for_role(AccountRole::Play);
++    assert_eq!(play.get_user().unwrap().username, "play@example.test");
++}
++
++#[test]
++fn credential_dual_account_play_refresh_never_touches_store() {
++    let (_, manager) = setup();
++    sign_in(&manager, "store");
++    sign_in(&manager.for_role(AccountRole::Play), "play");
++    let resolved = manager.resolve(AccountRole::Play).unwrap();
++    resolved
++        .save_user_token(PASSPORT_STS.into(), Token::Compact("play-refreshed".into()))
++        .unwrap();
++    assert_eq!(sts(&resolved), "play-refreshed");
++    assert_eq!(sts(&manager), "store-sts");
++    assert_eq!(manager.get_user().unwrap().username, "store@example.test");
++}
++
++#[test]
++fn credential_dual_account_fallback_refresh_stays_in_store() {
++    let (backend, manager) = setup();
++    sign_in(&manager, "store");
++    let resolved = manager.resolve(AccountRole::Play).unwrap();
++    resolved
++        .save_user_token(
++            PASSPORT_STS.into(),
++            Token::Compact("store-refreshed".into()),
++        )
++        .unwrap();
++    assert_eq!(sts(&manager), "store-refreshed");
++    // Falling back never creates a play account as a side effect.
++    assert!(backend.get("play/user-session").unwrap().is_none());
++    assert!(backend.get("play/user-tokens").unwrap().is_none());
++    assert!(!manager.for_role(AccountRole::Play).has_user().unwrap());
++}
+diff --git a/crates/xodus/src/tokens/manager.rs b/crates/xodus/src/tokens/manager.rs
+index c542e30b15a74e6a5c477ff88d21dde9d120500a..f96ce48c5818b09fd127a545fd3e94d5e9723cf1 100644
+--- a/crates/xodus/src/tokens/manager.rs
++++ b/crates/xodus/src/tokens/manager.rs
+@@ -1,3 +1,4 @@
++use std::borrow::Cow;
+ use std::collections::HashMap;
+ use std::sync::Arc;
+ use std::time::Instant;
+@@ -57,6 +58,33 @@ mod credential_account_metadata_tests {
+     }
+ }
+ 
++/// Which Microsoft account a user operation targets. `Store` owns licenses and
++/// entitlements and keeps the historical keyring keys; `Play` is the identity a
++/// running game sees and uses the same keys under a `play/` prefix. Device
++/// identity and device tokens are shared by both roles.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum AccountRole {
++    #[default]
++    Store,
++    Play,
++}
++
++impl AccountRole {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Store => "store",
++            Self::Play => "play",
++        }
++    }
++
++    fn key(self, key: &'static str) -> Cow<'static, str> {
++        match self {
++            Self::Store => Cow::Borrowed(key),
++            Self::Play => Cow::Owned(format!("play/{key}")),
++        }
++    }
++}
++
+ /// Semantic facade over the two storage tiers: a persistent, keychain-backed tier
+ /// for STS/device/user credentials, and an ephemeral tier for short-lived
+ /// per-relying-party XSTS tokens. Centralizes the read-merge-write pattern that was
+@@ -65,6 +93,7 @@ mod credential_account_metadata_tests {
+ pub struct TokenManager {
+     persistent: Arc<dyn TokenBackend>,
+     ephemeral: Arc<dyn ExpiringTokenBackend>,
++    role: AccountRole,
+ }
+ 
+ impl TokenManager {
+@@ -75,6 +104,7 @@ impl TokenManager {
+         Self {
+             persistent,
+             ephemeral,
++            role: AccountRole::Store,
+         }
+     }
+ 
+@@ -96,13 +126,51 @@ impl TokenManager {
+         )
+     }
+ 
++    /// The same storage, scoped to `role` for every user operation.
++    pub fn for_role(&self, role: AccountRole) -> Self {
++        Self {
++            role,
++            ..self.clone()
++        }
++    }
++
++    pub fn role(&self) -> AccountRole {
++        self.role
++    }
++
++    /// `Play` falls back to `Store` while no play account is stored, so a
++    /// single-account setup keeps its exact behavior. Resolve once and use the
++    /// returned manager for both reads and refreshed-token writes.
++    pub fn resolve(&self, role: AccountRole) -> Result<Self, TokenStoreError> {
++        let scoped = self.for_role(role);
++        if role == AccountRole::Play && !scoped.has_user()? {
++            return Ok(self.for_role(AccountRole::Store));
++        }
++        Ok(scoped)
++    }
++
++    pub fn has_user(&self) -> Result<bool, TokenStoreError> {
++        Ok(self
++            .persistent
++            .get(&self.role.key(keys::USER_SESSION))?
++            .is_some()
++            || self
++                .persistent
++                .get(&self.role.key(keys::USER_INFO))?
++                .is_some())
++    }
++
++    /// Removes this role's account. Device tokens belong to the store sign-in
++    /// lifecycle and are never removed by a play logout.
+     pub fn remove_persistent(&self) -> Result<(), TokenStoreError> {
+-        self.persistent.remove(keys::DEVICE_TOKENS)?;
+-        self.persistent.remove(keys::USER_TOKENS)?;
+-        self.persistent.remove(keys::USER_INFO)?;
++        if self.role == AccountRole::Store {
++            self.persistent.remove(keys::DEVICE_TOKENS)?;
++        }
++        self.persistent.remove(&self.role.key(keys::USER_TOKENS))?;
++        self.persistent.remove(&self.role.key(keys::USER_INFO))?;
+         // Clear legacy entries first so a failed logout never exposes a stale
+         // account underneath a still-valid session.
+-        self.persistent.remove(keys::USER_SESSION)
++        self.persistent.remove(&self.role.key(keys::USER_SESSION))
+     }
+ 
+     // ---- Device identity / license -----------------------------------------
+@@ -148,7 +216,11 @@ impl TokenManager {
+         if let Some(session) = self.user_session()? {
+             return Ok(session.tokens.get(address).cloned());
+         }
+-        Self::read_token_store(&*self.persistent, keys::USER_TOKENS, address)
++        Self::read_token_store(
++            &*self.persistent,
++            &self.role.key(keys::USER_TOKENS),
++            address,
++        )
+     }
+ 
+     pub fn save_user_token(&self, address: String, token: Token) -> Result<(), TokenStoreError> {
+@@ -156,11 +228,16 @@ impl TokenManager {
+             session.tokens.insert(address, token);
+             return Self::write_verified(
+                 &*self.persistent,
+-                keys::USER_SESSION,
++                &self.role.key(keys::USER_SESSION),
+                 &serde_json::to_vec(&session)?,
+             );
+         }
+-        Self::write_token_store(&*self.persistent, keys::USER_TOKENS, address, token)
++        Self::write_token_store(
++            &*self.persistent,
++            &self.role.key(keys::USER_TOKENS),
++            address,
++            token,
++        )
+     }
+ 
+     pub fn get_user_sts_token(&self) -> Result<Token, TokenStoreError> {
+@@ -184,7 +261,7 @@ impl TokenManager {
+         }
+         let bytes = self
+             .persistent
+-            .get(keys::USER_INFO)?
++            .get(&self.role.key(keys::USER_INFO))?
+             .ok_or(TokenStoreError::NotFound)?;
+         Ok(serde_json::from_slice(&bytes)?)
+     }
+@@ -192,14 +269,14 @@ impl TokenManager {
+     pub fn save_user(&self, user: &User) -> Result<(), TokenStoreError> {
+         Self::write_verified(
+             &*self.persistent,
+-            keys::USER_INFO,
++            &self.role.key(keys::USER_INFO),
+             &serde_json::to_vec(user)?,
+         )
+     }
+ 
+     fn user_session(&self) -> Result<Option<UserSession>, TokenStoreError> {
+         self.persistent
+-            .get(keys::USER_SESSION)?
++            .get(&self.role.key(keys::USER_SESSION))?
+             .map(|bytes| serde_json::from_slice(&bytes).map_err(Into::into))
+             .transpose()
+     }
+@@ -218,12 +295,14 @@ impl TokenManager {
+         let session = UserSession { user, tokens };
+         Self::write_verified(
+             &*self.persistent,
+-            keys::USER_SESSION,
++            &self.role.key(keys::USER_SESSION),
+             &serde_json::to_vec(&session)?,
+         )
+     }
+ 
+     // ---- Ephemeral XSTS-by-relying-party cache --------------------------------
++    // Keyed by relying party only (no callers today); include the role in the
++    // key before caching user-bound XSTS for more than one account.
+ 
+     pub fn get_cached_xsts(&self, relying_party: &str) -> Option<XstsResponse> {
+         let bytes = self.ephemeral.get(relying_party).ok()??;

@@ -102,6 +102,7 @@ export function TopStatus({ data, go, openFriends }: { data: AppSnapshot; go: (p
   const updates = [
     data.launcherUpdate?.latestVersion && !restart ? ui("ui.launcher_ba8971d", { version: data.launcherUpdate.latestVersion }) : '',
     data.backend.releaseAvailable && data.backend.updateAvailable ? ui("ui.backend_35f8dc4", { version: data.backend.releaseVersion ?? '' }).trim() : '',
+    data.backend.dualAccountBuild && data.backend.capabilities.dualAccount && data.backend.updateAvailable ? 'Dual-account backend' : '',
     nexusRuntimeUpdateAvailable(data.runtime) ? ui('home.runtime_update', { version: data.runtime.nexusVersion?.replace(/^runtime-/, '') ?? '' }).trim() : '',
   ].filter(Boolean);
   const updateTitle = [restart ? ui('home.restart_update') : '', updates.length ? ui('home.available_updates', { updates: updates.join(', ') }) : ''].filter(Boolean).join(' ');
@@ -891,7 +892,7 @@ export function SettingsPage({ data, toast }: { data: AppSnapshot; toast: (value
       {data.launcherUpdate?.phase ? <p>{uiText(data.launcherUpdate.phase)}</p> : null}
       {data.launcherUpdate?.updating ? <div className="progress-track"><i style={{ width: `${data.launcherUpdate.progress ?? 0}%` }} /></div> : null}
       {data.launcherUpdate?.error ? <div className="alert amber"><CircleAlert /><span>{uiText(data.launcherUpdate.error)}</span></div> : null}
-      <div className="settings-heading"><div className="settings-icon"><Rocket /></div><div><span className="overline">XODUS NEXUS</span><h2>{data.launcherUpdate?.currentVersion ?? ui("ui.development_build_63d499e")}</h2><p>{data.launcherUpdate?.latestVersion ? ui("ui.version_is_available_cc7c84d", { version: data.launcherUpdate.latestVersion }) : ui("ui.check_github_for_launcher_updates_6fa32b9")}</p></div></div>
+      <div className="settings-heading"><div className="settings-icon"><Rocket /></div><div><span className="overline">{data.backend.dualAccountBuild ? 'XODUS NEXUS · DUAL ACCOUNT' : 'XODUS NEXUS'}</span><h2>{data.launcherUpdate?.currentVersion ?? ui("ui.development_build_63d499e")}</h2><p>{data.launcherUpdate?.latestVersion ? ui("ui.version_is_available_cc7c84d", { version: data.launcherUpdate.latestVersion }) : ui("ui.check_github_for_launcher_updates_6fa32b9")}</p></div></div>
       <div className="button-row">
         {data.launcherUpdate?.latestVersion && data.launcherUpdate.canInstall && !data.launcherUpdate.restartRequired ? <button className="primary" disabled={data.launcherUpdate.updating || Boolean(busy)} onClick={async () => { if (await confirm({ title: ui("ui.install_launcher_update_15498d2"), message: ui("ui.the_current_appimage_will_be_backed_up_games_and_8e8c5e5"), confirmLabel: ui("ui.install_update_cada421") })) void invoke('launcher-install', () => window.launcher.installLauncherUpdate()); }}><ArrowDownToLine />{data.launcherUpdate.updating ? ui("ui.updating_dfe40ef") : ui("ui.install_launcher_update_d1988d9")}</button> : null}
         {data.launcherUpdate?.releaseUrl && !data.launcherUpdate.canInstall ? <a className="primary" href={data.launcherUpdate.releaseUrl} target="_blank" rel="noreferrer"><ArrowDownToLine />{ui("ui.download_update_4f494b2")}</a> : null}
@@ -903,19 +904,25 @@ export function SettingsPage({ data, toast }: { data: AppSnapshot; toast: (value
     </section>
 
     <section className="settings-card account-card">
-      <div className="settings-heading"><AccountAvatar auth={data.auth} large /><div><span className="overline">{ui("ui.microsoft_account_90f90f6")}</span><h2>{data.auth.gamertag ?? data.auth.username ?? (data.auth.stored === false ? ui("ui.not_signed_in_491fc91") : ui("ui.account_status_unavailable_3b97a47"))}</h2><p>{data.auth.stored === true ? ui("ui.credentials_stored_by_xodus_bca3867") : ui("ui.authentication_uses_the_original_xodus_webview_cf2dcb9")}</p></div><span className={`status-label ${data.auth.stored === true ? 'ready' : data.auth.stored === false ? 'off' : 'unknown'}`}><StatusDot tone={data.auth.stored === true ? 'green' : data.auth.stored === false ? 'red' : 'amber'} />{data.auth.stored === true ? ui("ui.stored_1afc73e") : data.auth.stored === false ? ui("ui.signed_out_db8436b") : ui("ui.unknown_2375999")}</span></div>
+      <div className="settings-heading"><AccountAvatar auth={caps.dualAccount ? { ...data.auth, avatarDataUrl: data.auth.licenseAvatarDataUrl } : data.auth} large /><div><span className="overline">{caps.dualAccount ? 'GAME PASS LICENSE ACCOUNT · STORE' : ui("ui.microsoft_account_90f90f6")}</span><h2>{(caps.dualAccount ? undefined : data.auth.gamertag) ?? data.auth.username ?? (data.auth.stored === false ? ui("ui.not_signed_in_491fc91") : ui("ui.account_status_unavailable_3b97a47"))}</h2><p>{data.auth.stored === true ? ui("ui.credentials_stored_by_xodus_bca3867") : ui("ui.authentication_uses_the_original_xodus_webview_cf2dcb9")}</p></div><span className={`status-label ${data.auth.stored === true ? 'ready' : data.auth.stored === false ? 'off' : 'unknown'}`}><StatusDot tone={data.auth.stored === true ? 'green' : data.auth.stored === false ? 'red' : 'amber'} />{data.auth.stored === true ? ui("ui.stored_1afc73e") : data.auth.stored === false ? ui("ui.signed_out_db8436b") : ui("ui.unknown_2375999")}</span></div>
       <div className="account-note"><CircleAlert /><span>{uiText(data.auth.note)}</span></div>
       <KeyringSetup compact disabled={data.auth.running} />
-      <div className="button-row"><button className="primary" disabled={!caps.login || data.auth.running} onClick={() => invoke('login', () => window.launcher.login(), ui("ui.xodus_sign_in_completed_8240737"))}>{data.auth.running ? <LoaderCircle className="spin" /> : <LogIn />}{data.auth.stored ? ui("ui.sign_in_again_51fbe1d") : ui("ui.sign_in_with_xodus_252572f")}</button><button className="secondary" disabled={!caps.logout || data.auth.running || data.auth.stored === false} title={ui("ui.remove_saved_sign_in_credentials_and_local_devic_6485324")} onClick={() => invoke('logout', () => window.launcher.logout(), ui("ui.saved_sign_in_credentials_and_local_device_regis_c9738bd"))}>{ui("ui.sign_out_48f0d3d")}</button><button className="secondary" disabled={!caps.account || data.auth.running} onClick={() => invoke('account', () => window.launcher.refreshAccount())}><RefreshCw />{ui("ui.refresh_status_442c4b8")}</button></div>
+      <div className="button-row"><button className="primary" disabled={!caps.login || data.auth.running} onClick={() => invoke('login', () => window.launcher.login(), ui("ui.xodus_sign_in_completed_8240737"))}>{data.auth.running ? <LoaderCircle className="spin" /> : <LogIn />}{data.auth.stored ? ui("ui.sign_in_again_51fbe1d") : ui("ui.sign_in_with_xodus_252572f")}</button><button className="secondary" disabled={!caps.logout || data.auth.running || data.auth.stored === false} title={caps.dualAccount ? 'Remove saved sign-in credentials of both accounts and local device registration. Games and saves are kept.' : ui("ui.remove_saved_sign_in_credentials_and_local_devic_6485324")} onClick={() => invoke('logout', () => window.launcher.logout(), caps.dualAccount ? 'Both accounts and the local device registration were removed.' : ui("ui.saved_sign_in_credentials_and_local_device_regis_c9738bd"))}>{ui("ui.sign_out_48f0d3d")}</button><button className="secondary" disabled={!caps.account || data.auth.running} onClick={() => invoke('account', () => window.launcher.refreshAccount())}><RefreshCw />{ui("ui.refresh_status_442c4b8")}</button></div>
       <PasskeySignInNotice />
     </section>
+
+    {caps.dualAccount ? <PlayAccountCard data={data} busy={busy} invoke={invoke} /> : null}
 
     <section className="settings-card">
       <div className="settings-heading"><div className="settings-icon"><Terminal /></div><div><h2>{ui("ui.xodus_backend_a99abd3")}</h2><p>{data.backend.version ? ui("ui.nexus_backend_909289e", { version: data.backend.version }) : data.backend.available ? ui("ui.backend_cli_02229de", { version: data.backend.capabilities.version ?? ui('settings.unknown_version') }) : ui("ui.install_the_prebuilt_nexus_backend_bd247cd")}</p></div><span className={`status-label ${data.backend.available ? 'ready' : 'off'}`}><StatusDot tone={data.backend.available ? 'green' : 'red'} />{data.backend.available ? ui("ui.validated_3dac322") : ui("ui.offline_5c3ce8d")}</span></div>
       {data.backend.blockReason ? <div className="alert amber"><CircleAlert /><span>{uiText(data.backend.blockReason)}</span></div> : null}
+      {data.backend.dualAccountBuild ? <div className="account-note"><CircleAlert /><span>{caps.dualAccount
+        ? 'Dual-account backend active: licenses and downloads use the Store account, games use the Xbox account.'
+        : 'The active backend is the original one. Build the dual-account backend to play with a separate Xbox account.'}</span></div> : null}
       {data.backend.phase ? <p className="runtime-phase">{uiText(data.backend.phase)}</p> : null}
+      {data.backend.dualAccountBuild && data.backend.updating && logs.length ? <pre className="build-log">{logs.slice(-8).join('\n')}</pre> : null}
       <div className="backend-diagnostic-action"><BackendLogButton toast={toast} /><p className="fine-print">{ui("ui.local_operation_results_and_safe_error_codes_no_cd558f7")}</p></div>
-      <div className="button-row end"><button className="secondary" disabled={Boolean(busy) || data.backend.checking || data.backend.updating} onClick={() => invoke('backend-check', () => window.launcher.checkBackendUpdate())}>{busy === 'backend-check' || data.backend.checking ? <LoaderCircle className="spin" /> : <RefreshCw />}{ui("ui.check_for_updates_f26f327")}</button>{data.backend.releaseAvailable && data.backend.updateAvailable ? <button className="primary" disabled={Boolean(busy) || data.backend.updating || data.backend.checking} onClick={() => invoke('backend-update', () => window.launcher.updateBackend(), ui("ui.the_nexus_backend_was_verified_installed_and_act_62d374e"))}>{busy === 'backend-update' || data.backend.updating ? <LoaderCircle className="spin" /> : <ArrowDownToLine />}{data.backend.available ? ui("ui.update_backend_bddcd8b") : ui("ui.install_backend_73e7239")}</button> : null}</div>
+      <div className="button-row end">{data.backend.dualAccountBuild ? <DualAccountBackendButtons data={data} busy={busy} invoke={invoke} /> : null}<button className="secondary" disabled={Boolean(busy) || data.backend.checking || data.backend.updating} onClick={() => invoke('backend-check', () => window.launcher.checkBackendUpdate())}>{busy === 'backend-check' || data.backend.checking ? <LoaderCircle className="spin" /> : <RefreshCw />}{ui("ui.check_for_updates_f26f327")}</button>{data.backend.releaseAvailable && data.backend.updateAvailable ? <button className="primary" disabled={Boolean(busy) || data.backend.updating || data.backend.checking} onClick={() => invoke('backend-update', () => window.launcher.updateBackend(), ui("ui.the_nexus_backend_was_verified_installed_and_act_62d374e"))}>{busy === 'backend-update' || data.backend.updating ? <LoaderCircle className="spin" /> : <ArrowDownToLine />}{data.backend.available ? ui("ui.update_backend_bddcd8b") : ui("ui.install_backend_73e7239")}</button> : null}</div>
     </section>
 
     <section className="settings-card">
@@ -955,6 +962,36 @@ export function SettingsPage({ data, toast }: { data: AppSnapshot; toast: (value
   </main>;
 }
 
+type SettingsInvoke = (name: string, fn: () => Promise<unknown>, success?: string) => Promise<void>;
+
+/** In-game Xbox account, like the Xbox app on Windows. Licenses stay on the Store account. */
+function PlayAccountCard({ data, busy, invoke }: { data: AppSnapshot; busy?: string; invoke: SettingsInvoke }) {
+  const play = data.auth.play;
+  const own = play?.stored === true && !play.fallback;
+  const blocked = Boolean(busy) || data.auth.running || !data.backend.capabilities.login;
+  return <section className="settings-card account-card">
+    <div className="settings-heading"><AccountAvatar auth={data.auth} large /><div><span className="overline">XBOX ACCOUNT · IN-GAME</span>
+      <h2>{own ? data.auth.gamertag ?? play?.username : !play || play.stored === null ? 'Status unavailable' : 'Same as the license account'}</h2>
+      <p>{own ? `${play?.username} · gamertag, achievements, cloud saves and play time` : 'Sign in with your personal Xbox account to play as yourself, like the Xbox app on Windows.'}</p></div>
+      <span className={`status-label ${own ? 'ready' : 'unknown'}`}><StatusDot tone={own ? 'green' : 'amber'} />{own ? 'IN-GAME' : 'FALLBACK'}</span></div>
+    <div className="account-note"><CircleAlert /><span>Games see only this account. Game Pass licenses, downloads and updates keep using the license account above. Restart a running game after changing it.</span></div>
+    <div className="button-row">
+      <button className="primary" disabled={blocked} onClick={() => invoke('login-play', () => window.launcher.loginPlay(), 'Xbox account signed in. Games now run as this account.')}>{busy === 'login-play' ? <LoaderCircle className="spin" /> : <LogIn />}{own ? 'Change Xbox account' : 'Sign in Xbox account'}</button>
+      <button className="secondary" disabled={blocked || !own || !data.backend.capabilities.logout} onClick={() => invoke('logout-play', () => window.launcher.logoutPlay(), 'Xbox account removed. Games use the license account again.')}>Sign out Xbox account</button>
+    </div>
+  </section>;
+}
+
+/** Source build of the pinned dual-account recipe, never the prebuilt original. */
+function DualAccountBackendButtons({ data, busy, invoke }: { data: AppSnapshot; busy?: string; invoke: SettingsInvoke }) {
+  const active = Boolean(data.backend.capabilities.dualAccount);
+  const disabled = Boolean(busy) || data.backend.updating || data.backend.checking;
+  return <>
+    {data.backend.previousAvailable ? <button className="secondary" disabled={disabled} onClick={() => invoke('backend-restore', () => window.launcher.restorePreviousBackend(), 'The previous backend was restored.')}>Restore previous backend</button> : null}
+    <button className={active && !data.backend.updateAvailable ? 'secondary' : 'primary'} disabled={disabled} onClick={() => invoke('backend-rebuild', () => window.launcher.rebuildBackend(), 'The dual-account backend was built and activated.')}>{busy === 'backend-rebuild' || data.backend.updating ? <LoaderCircle className="spin" /> : <Github />}{!active ? 'Use dual-account backend' : data.backend.updateAvailable ? 'Update dual-account backend' : 'Rebuild dual-account backend'}</button>
+  </>;
+}
+
 function backendSetupHint(backend: AppSnapshot['backend']): string {
   if (backend.checking || backend.updating) return ui("ui.preparing_sign_in_cdca952");
   if (backend.blockReason) return backend.blockReason;
@@ -977,6 +1014,7 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
     catch (error) { toast({ kind: 'error', message: errorMessage(error) }); }
     finally { setInstallingBackend(false); }
   }
+  const [building, setBuilding] = useState(false);
 
   async function browse() {
     try {
@@ -989,6 +1027,12 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
     try { await window.launcher.login(); }
     catch (error) { toast({ kind: 'error', message: errorMessage(error) }); }
     finally { setSigningIn(false); }
+  }
+  async function buildBackend() {
+    setBuilding(true);
+    try { await window.launcher.rebuildBackend(); toast({ kind: 'success', message: 'The dual-account backend was built and activated.' }); }
+    catch (error) { toast({ kind: 'error', message: errorMessage(error) }); }
+    finally { setBuilding(false); }
   }
   async function finish() {
     setSaving(true);
@@ -1016,7 +1060,8 @@ export function FirstRunWizard({ data, toast }: { data: AppSnapshot; toast: (val
       <KeyringSetup compact disabled={signingIn || data.auth.running || data.backend.updating || installingBackend} />
       <div className="wizard-account">
         <div><strong>{ui("ui.microsoft_account_6c2b1f2")}</strong><small>{data.backend.available ? (data.auth.stored === true ? ui("ui.signed_in_as_d7e6f22", { name: data.auth.username ?? ui('settings.stored_account') }) : data.auth.stored === false ? ui("ui.not_signed_in_yet_store_browsing_works_without_a_99f0bcc") : ui("ui.account_status_is_still_being_checked_3a41b4e")) : backendSetupHint(data.backend)}</small></div>
-        {!data.backend.available&&data.backend.blockReason&&!data.backend.checking&&!data.backend.updating?<button className="secondary" disabled={installingBackend||signingIn||data.auth.running} onClick={()=>void retryBackend()}>{ui("ui.retry_setup_8e08720")}</button>:null}
+        {data.backend.dualAccountBuild && !data.backend.available ? <button className="secondary" disabled={building || data.backend.updating} onClick={() => void buildBackend()}>{building || data.backend.updating ? <LoaderCircle className="spin" /> : <Github />}Use dual-account backend</button> : null}
+        {!data.backend.dualAccountBuild&&!data.backend.available&&data.backend.blockReason&&!data.backend.checking&&!data.backend.updating?<button className="secondary" disabled={installingBackend||signingIn||data.auth.running} onClick={()=>void retryBackend()}>{ui("ui.retry_setup_8e08720")}</button>:null}
         <button className="secondary" disabled={!data.backend.available || !data.backend.capabilities.login || data.backend.updating || installingBackend || signingIn || data.auth.running} onClick={() => void signIn()}>{signingIn ? <LoaderCircle className="spin" /> : <LogIn />}{data.auth.stored ? ui("ui.sign_in_again_51fbe1d") : ui("ui.sign_in_bfd402b")}</button>
       </div>
       <div className="wizard-actions">

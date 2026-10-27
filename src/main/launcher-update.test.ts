@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { LauncherUpdater, launcherCandidate } from './launcher-update.js';
+import { LAUNCHER_REPOSITORY, LauncherUpdater, launcherCandidate } from './launcher-update.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 function image(marker: number): Buffer {
@@ -13,8 +13,8 @@ function image(marker: number): Buffer {
 function release(version = '0.2.3') {
   const name = `Xodus-Nexus-${version}-x86_64.AppImage`;
   return { tag_name: `v${version}`, assets: [
-    { name, size: 100, browser_download_url: `https://github.com/domsvoboda/xodus-nexus/releases/download/v${version}/${name}` },
-    { name: `${name}.sha512sum`, size: 200, browser_download_url: `https://github.com/domsvoboda/xodus-nexus/releases/download/v${version}/${name}.sha512sum` },
+    { name, size: 100, browser_download_url: `https://github.com/${LAUNCHER_REPOSITORY}/releases/download/v${version}/${name}` },
+    { name: `${name}.sha512sum`, size: 200, browser_download_url: `https://github.com/${LAUNCHER_REPOSITORY}/releases/download/v${version}/${name}.sha512sum` },
   ] };
 }
 async function fixture(bad = '') {

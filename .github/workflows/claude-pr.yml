@@ -1,0 +1,99 @@
+# Claude reviews every same-repo PR into dual-account, fixes what is broken
+# and pushes to the PR branch. It never merges. Needs the Claude GitHub App and
+# the CLAUDE_CODE_OAUTH_TOKEN secret (see docs/AUTOMATION.md).
+name: Claude PR check
+
+on:
+  pull_request:
+    branches: [dual-account]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+jobs:
+  review:
+    # Fork PRs get no secrets; Claude's own pushes must not re-run it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'claude[bot]')
+    runs-on: ubuntu-24.04
+    # Job level: Claude's own push starts a skipped run, which must not cancel this one.
+    concurrency:
+      group: claude-pr-${{ github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: true
+    timeout-minutes: 60
+    env:
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Resolve the PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Skip Claude's own commits
+        id: own
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git log -1 --format=%B | grep -qF '[claude-review]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Latest commit is Claude's own; nothing to review."
+          fi
+      - name: Claude is not configured yet
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: echo "::notice::Add the CLAUDE_CODE_OAUTH_TOKEN secret (docs/AUTOMATION.md) to enable the Claude review."
+      - uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true' && steps.own.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Merges bring .github/workflows changes; only SYNC_TOKEN may push those.
+          github_token: ${{ secrets.SYNC_TOKEN || github.token }}
+          # The sync workflows start this review as github-actions.
+          allowed_bots: github-actions
+          # Progress comments exist only for PR events, not for a dispatched run.
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          prompt: |
+            You maintain the "dual-account" fork of Xodus Nexus. Read docs/DUAL_ACCOUNT.md first.
+            Pull request #${{ steps.pr.outputs.number }}: branch ${{ steps.pr.outputs.head }} into dual-account.
+
+            1. Merge origin/dual-account into this branch if it does not merge cleanly, and resolve conflicts.
+               Keep every dual-account change (play/store accounts, sourceOnly backend, LAUNCHER_REPOSITORY,
+               lock repository https://github.com/PinkFloyd1213/xodus-dual-account.git, xodus-dual-account.patch
+               kept LAST in assets/backend-source.lock.json with patchId suffix -dual-account-N) together with
+               the upstream changes.
+            2. If the backend lock changed (commit, cargoLockSha256 or patch list), check that every patch still
+               applies on the pinned commit: clone the lock repository into /tmp, checkout the commit, then
+               `git apply --check` each patch in order. Keep xodus-dual-account.patch LAST and the lock repository
+               on the backend fork. Do NOT regenerate xodus-dual-account.patch here: the backend repository
+               (PinkFloyd1213/xodus-dual-account) opens its own "Sync Nexus backend recipe" PR and, once merged,
+               pushes the regenerated patch onto this PR automatically. If it does not apply yet, say so in the
+               summary and tell the owner to merge the backend PR first.
+            3. Run `npm ci`, `npm run typecheck`, `npx vitest run`. Fix real failures in the source. Do not weaken
+               or delete tests unless one is clearly wrong; explain why.
+            4. Commit with clear messages ending with " [claude-review]" and push to this branch with `git push origin HEAD`. Never merge, never
+               force-push, never touch secrets or tokens, never print account data.
+            Finish with a short summary in French for the owner: what changed upstream, what you fixed, what is
+            left for a human, and whether it looks safe to merge.
+            ${{ github.event_name == 'workflow_dispatch' && format('This run was started by hand: write the summary to /tmp/claude-summary.md and post it with `gh pr comment {0} -R {1} --body-file /tmp/claude-summary.md`.', steps.pr.outputs.number, github.repository) || '' }}
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm run typecheck),Bash(npx vitest run),Bash(npx vitest run *),Bash(git status),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git fetch *),Bash(git merge *),Bash(git add *),Bash(git commit *),Bash(git push origin HEAD),Bash(git clone *),Bash(git remote *),Bash(git rebase *),Bash(git branch *),Bash(git switch *),Bash(git checkout *),Bash(git config *),Bash(git -C /tmp/*),Bash(cd /tmp/*),Bash(sha256sum *),Bash(cp *),Bash(node -p *),Bash(ls *),Bash(gh pr comment ${{ steps.pr.outputs.number }} -R ${{ github.repository }} --body-file /tmp/claude-summary.md)"

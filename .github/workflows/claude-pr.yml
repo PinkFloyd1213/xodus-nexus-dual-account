@@ -50,15 +50,25 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Skip Claude's own commits
+        id: own
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git log -1 --format=%B | grep -qF '[claude-review]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Latest commit is Claude's own; nothing to review."
+          fi
       - name: Claude is not configured yet
         if: env.HAS_CLAUDE_TOKEN != 'true'
         run: echo "::notice::Add the CLAUDE_CODE_OAUTH_TOKEN secret (docs/AUTOMATION.md) to enable the Claude review."
       - uses: anthropics/claude-code-action@v1
-        if: env.HAS_CLAUDE_TOKEN == 'true'
+        if: env.HAS_CLAUDE_TOKEN == 'true' && steps.own.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Merges bring .github/workflows changes; only SYNC_TOKEN may push those.
+          github_token: ${{ secrets.SYNC_TOKEN || github.token }}
+          # The sync workflows start this review as github-actions.
+          allowed_bots: github-actions
           # Progress comments exist only for PR events, not for a dispatched run.
           track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
@@ -79,7 +89,7 @@ jobs:
                summary and tell the owner to merge the backend PR first.
             3. Run `npm ci`, `npm run typecheck`, `npx vitest run`. Fix real failures in the source. Do not weaken
                or delete tests unless one is clearly wrong; explain why.
-            4. Commit with clear messages and push to this branch with `git push origin HEAD`. Never merge, never
+            4. Commit with clear messages ending with " [claude-review]" and push to this branch with `git push origin HEAD`. Never merge, never
                force-push, never touch secrets or tokens, never print account data.
             Finish with a short summary in French for the owner: what changed upstream, what you fixed, what is
             left for a human, and whether it looks safe to merge.

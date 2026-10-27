@@ -1,5 +1,5 @@
 diff --git a/crates/xodus-cli/src/commands.rs b/crates/xodus-cli/src/commands.rs
-index 5a66715ceef6cd41228826089c9636434fcd5ab2..f4a7ebcbc7994948877296912610f57d5aa68756 100644
+index 1e0e96d2a6126124578feee8ac6b945dc5a2c97c..434efe6284c9456d1ee3be9dfd72ed5df5eb0d4a 100644
 --- a/crates/xodus-cli/src/commands.rs
 +++ b/crates/xodus-cli/src/commands.rs
 @@ -1,3 +1,4 @@
@@ -133,7 +133,7 @@ index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df85
          assert_eq!(minutes(&json!({"statlistscollection":[]}), "123", 42).unwrap(), None);
          for (raw, n) in [("0",0.0),("0.5",0.5)] { assert_eq!(minutes(&json!({"statlistscollection":[list(json!(raw))]}),"123",42).unwrap(),Some(n)); }
 diff --git a/crates/xodus-cli/src/commands/login.rs b/crates/xodus-cli/src/commands/login.rs
-index b6d09351b850b1c85baeebb974df0e6d050d909e..555dce9dde9f7cc98838e3680f6fca56c488a47c 100644
+index e28daff846f89f0e4259945a360356510415c5c1..16a9106b10f42a81209c08a704698b41834ef651 100644
 --- a/crates/xodus-cli/src/commands/login.rs
 +++ b/crates/xodus-cli/src/commands/login.rs
 @@ -2,7 +2,7 @@ use std::process::ExitCode;
@@ -260,7 +260,7 @@ index 2c4fe4bd774ee086482d6511bea8c9981cc1d178..532f7ec28389dc01b624f8f7c3be35ed
 +    }
 +}
 diff --git a/crates/xodus-cli/src/commands/profile.rs b/crates/xodus-cli/src/commands/profile.rs
-index bab4e91213120162181be18c2a4bb3e4b81e4056..6bfef558212c0872fda1edad98b8574a7be04255 100644
+index 2f8a2a9c6c3a872a206e369626da6a994522d731..7b3055224c645e93886c17568b42d0c0f20e8c71 100644
 --- a/crates/xodus-cli/src/commands/profile.rs
 +++ b/crates/xodus-cli/src/commands/profile.rs
 @@ -2,7 +2,7 @@
@@ -288,7 +288,7 @@ index bab4e91213120162181be18c2a4bb3e4b81e4056..6bfef558212c0872fda1edad98b8574a
          }
      };
 diff --git a/crates/xodus-cli/src/commands/run.rs b/crates/xodus-cli/src/commands/run.rs
-index bb0b9e7acb90ce91ae22e600af050fb411b2dcf6..fe94d3a5953c1f3e3ab0db20c9a187f4880d93b7 100644
+index 1ec9cb9c16d4ce2924bdc49adf971b5c53b8a4cc..5ec748a2d5d16ad10dd7a0f24255774bf8a82b41 100644
 --- a/crates/xodus-cli/src/commands/run.rs
 +++ b/crates/xodus-cli/src/commands/run.rs
 @@ -18,13 +18,16 @@ use tempfile::{tempdir, tempfile, tempfile_in};
@@ -310,7 +310,7 @@ index bb0b9e7acb90ce91ae22e600af050fb411b2dcf6..fe94d3a5953c1f3e3ab0db20c9a187f4
          return None;
      };
 diff --git a/crates/xodus-cli/src/main.rs b/crates/xodus-cli/src/main.rs
-index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58ed5f18bf 100644
+index ea6f6d93af599018ca1eed1b6e6a8f2664565500..84b3e8754bddf5645a3ccdae034e71eae93c92e5 100644
 --- a/crates/xodus-cli/src/main.rs
 +++ b/crates/xodus-cli/src/main.rs
 @@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
@@ -344,7 +344,7 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
  #[derive(Subcommand)]
  enum SubCommand {
      #[cfg(target_os = "linux")]
-@@ -85,23 +100,51 @@ enum SubCommand {
+@@ -87,28 +102,63 @@ enum SubCommand {
      Account {
          #[arg(long, default_value_t = false)]
          json: bool,
@@ -359,6 +359,18 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
      #[command(about = "Read Xbox gamertag and gamerpic for the stored account")]
      Profile {
          #[arg(long, default_value_t = false)]
+         json: bool,
++        #[arg(
++            long,
++            value_enum,
++            default_value_t = AccountArg::Store,
++            help = "Account role: store (licenses) or play (in-game identity, falls back to store)"
++        )]
++        account: AccountArg,
+     },
+     #[command(about = "Explicit Xbox friends and text chat, JSON request on standard input")]
+     Social {
+         #[arg(long, required = true)]
          json: bool,
 +        #[arg(
 +            long,
@@ -396,7 +408,7 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
      },
      #[command(about = "Read account product entitlements without starting sign-in")]
      Library {
-@@ -110,10 +153,25 @@ enum SubCommand {
+@@ -117,10 +167,25 @@ enum SubCommand {
          #[arg(long, default_value = "US")]
          market: String,
      },
@@ -423,7 +435,7 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
      },
      #[command(about = "Download and extract the game through streaming algorithm")]
      Streaming {
-@@ -324,7 +382,11 @@ async fn main() -> ExitCode {
+@@ -335,7 +400,11 @@ async fn main() -> ExitCode {
              .await
          }
          SubCommand::Library { json, market } => commands::library::run(&tokens, json, market).await,
@@ -436,17 +448,25 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
              Ok(user) => {
                  if json {
                      println!(
-@@ -352,11 +414,42 @@ async fn main() -> ExitCode {
+@@ -363,12 +432,49 @@ async fn main() -> ExitCode {
                  ExitCode::FAILURE
              }
          },
 -        SubCommand::Profile { json } => commands::profile::run(&tokens, json).await,
+-        SubCommand::Social { .. } => commands::social::run(&tokens).await,
 -        SubCommand::GameActivity { title_id, json } => commands::game_activity::run(&tokens, title_id, json).await,
 -        SubCommand::Achievements { title_id, json } => commands::achievements::run(&tokens, title_id, json).await,
 -        SubCommand::Login => commands::login::run(&client, &tokens).await,
 -        SubCommand::Logout { device } => commands::logout::run(&tokens, device).await,
 +        SubCommand::Profile { json, account } => match tokens.resolve(account.into()) {
 +            Ok(tokens) => commands::profile::run(&tokens, json).await,
++            Err(error) => {
++                error.report();
++                ExitCode::FAILURE
++            }
++        },
++        SubCommand::Social { account, .. } => match tokens.resolve(account.into()) {
++            Ok(tokens) => commands::social::run(&tokens).await,
 +            Err(error) => {
 +                error.report();
 +                ExitCode::FAILURE
@@ -484,8 +504,45 @@ index c76096cca836e633a9728e78341114390dbb892f..fdccd6087e6be7ee2fff013641d47b58
          SubCommand::Extract {
              path,
              destination,
+diff --git a/crates/xodus-service/src/account_metadata.rs b/crates/xodus-service/src/account_metadata.rs
+index a1222965c6db8de56b17574fbbdf163134d99edb..7d507f3e7e61fd803cfe450508732e9a0a2aef0f 100644
+--- a/crates/xodus-service/src/account_metadata.rs
++++ b/crates/xodus-service/src/account_metadata.rs
+@@ -19,8 +19,32 @@ pub fn bound_ids(ticket: Option<&User>, store: Option<&User>) -> (Option<String>
+     (Some(xbox), Some(store_id))
+ }
+ 
++/// Dual-account (store/play): the Xbox id comes from the play session that
++/// issued the ticket, checked against a re-read of that same session; the Store
++/// id from the store session. As on Windows, the two accounts may differ. With
++/// no play account both sessions are the store one, so this equals `bound_ids`.
++pub fn bound_ids_for_roles(ticket: Option<&User>, current: Option<&User>, store: Option<&User>) -> (Option<String>, Option<String>) {
++    let (Some(xbox), _) = bound_ids(ticket, current) else { return (None, None) };
++    let Some(store_id) = store.and_then(|store| account_id(&store.puid)) else { return (None, None) };
++    (Some(xbox), Some(store_id))
++}
++
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn account_metadata_pairs_play_and_store_like_windows() {
++        let play = user("0123456789ABCDEF");
++        let store = User { puid: "fedcba9876543210".into(), username: "store@example.invalid".into() };
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), Some(&store)),
++            (Some("0123456789abcdef".into()), Some("fedcba9876543210".into())));
++        // Single account (play falls back to store): identical to bound_ids.
++        assert_eq!(bound_ids_for_roles(Some(&store), Some(&store), Some(&store)), bound_ids(Some(&store), Some(&store)));
++        // The play session changed during the exchange, or a session is missing.
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&store), Some(&store)), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), None, Some(&store)), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), None), (None, None));
++        assert_eq!(bound_ids_for_roles(Some(&play), Some(&play), Some(&user("0000000000000000"))), (None, None));
++    }
+     use super::*;
+     fn user(puid: &str) -> User { User { puid: puid.into(), username: "synthetic@example.invalid".into() } }
+     #[test]
 diff --git a/crates/xodus-service/src/connection/xml.rs b/crates/xodus-service/src/connection/xml.rs
-index e6007b4d14e97d892a37a4bbae112cfca8339827..4b828cb7f42ffde11e111b982614799255b12319 100644
+index e0094837095caeea4b7ebb8fc8af84d37fab8e63..9a1753975beaec42b1a91313033bf5ab28fdade8 100644
 --- a/crates/xodus-service/src/connection/xml.rs
 +++ b/crates/xodus-service/src/connection/xml.rs
 @@ -4,6 +4,7 @@ use xodus::models::secrets::Token;
@@ -533,17 +590,21 @@ index e6007b4d14e97d892a37a4bbae112cfca8339827..4b828cb7f42ffde11e111b9826147992
      match message_type {
          XodusMessageType::Ping => Ok(buffer),
          XodusMessageType::StorePackageUpdatesRequest => {
-@@ -54,7 +80,8 @@ pub async fn parse_message(
+@@ -54,10 +80,11 @@ pub async fn parse_message(
              let string_buf = std::str::from_utf8(&buffer)?;
              tracing::debug!("String buffer: {string_buf:?}");
              let req = quick_xml::de::from_str::<MSATokenRequest>(string_buf)?;
--            let Token::Legacy(token) = context.tokens().get_user_sts_token()? else {
+-            let identity_session = context.tokens().get_user_sts_session()?;
 +            let tokens = tokens.ok_or(xodus::models::secrets::InvalidTokenResponse)?;
-+            let Token::Legacy(token) = tokens.get_user_sts_token()? else {
-                 return Ok(vec![]);
++            let identity_session = tokens.get_user_sts_session()?;
+             let request_token = match &identity_session {
+                 Some((_, token)) => token.clone(),
+-                None => context.tokens().get_user_sts_token()?,
++                None => tokens.get_user_sts_token()?,
              };
-             let scope = if req.msa_full_trust {
-@@ -112,7 +139,8 @@ pub async fn parse_message(
+             let Token::Legacy(token) = request_token else {
+                 return Ok(vec![]);
+@@ -117,7 +144,8 @@ pub async fn parse_message(
                          } else {
                              address
                          };
@@ -553,7 +614,29 @@ index e6007b4d14e97d892a37a4bbae112cfca8339827..4b828cb7f42ffde11e111b9826147992
                              tracing::warn!("Failed to persist refreshed STS token: {err}");
                          }
                      }
-@@ -139,3 +167,25 @@ pub async fn parse_message(
+@@ -127,13 +155,15 @@ pub async fn parse_message(
+                     let Token::Compact(user_token) = token else {
+                         return Ok(vec![]);
+                     };
+-                    // Store licensing uses this same session facade. Bind the
+-                    // Xbox ticket's MSA principal to its current Store account,
+-                    // never infer either account identifier from an Xbox XUID.
+-                    let current_identity = context.tokens().get_user_sts_session().ok().flatten();
+-                    let (xbox_msa_account_id, store_msa_account_id) = crate::account_metadata::bound_ids(
++                    // Bind the Xbox ticket's MSA principal to its own (play) session,
++                    // re-read to reject a change mid-exchange, and the Store id to
++                    // the store session; never infer either from an Xbox XUID.
++                    let current_identity = tokens.get_user_sts_session().ok().flatten();
++                    let store_identity = context.tokens().get_user_sts_session().ok().flatten();
++                    let (xbox_msa_account_id, store_msa_account_id) = crate::account_metadata::bound_ids_for_roles(
+                         identity_session.as_ref().map(|(user, _)| user),
+-                        current_identity.as_ref().map(|(user, _)| user));
++                        current_identity.as_ref().map(|(user, _)| user),
++                        store_identity.as_ref().map(|(user, _)| user));
+                     let payload = MSATokenResponse {
+                         token: user_token,
+                         expiry: expiry.timestamp(),
+@@ -153,3 +183,25 @@ pub async fn parse_message(
          _ => Err("Unimplemented".into()),
      }
  }
@@ -761,7 +844,7 @@ index 0000000000000000000000000000000000000000..1d75dda91f5f21cad8377ed03e4b86a3
 +    assert!(!manager.for_role(AccountRole::Play).has_user().unwrap());
 +}
 diff --git a/crates/xodus/src/tokens/manager.rs b/crates/xodus/src/tokens/manager.rs
-index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae873d9aba 100644
+index c542e30b15a74e6a5c477ff88d21dde9d120500a..f96ce48c5818b09fd127a545fd3e94d5e9723cf1 100644
 --- a/crates/xodus/src/tokens/manager.rs
 +++ b/crates/xodus/src/tokens/manager.rs
 @@ -1,3 +1,4 @@
@@ -769,9 +852,9 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
  use std::collections::HashMap;
  use std::sync::Arc;
  use std::time::Instant;
-@@ -23,6 +24,33 @@ struct UserSession {
- 
- pub const PASSPORT_STS: &str = "http://Passport.NET/STS";
+@@ -57,6 +58,33 @@ mod credential_account_metadata_tests {
+     }
+ }
  
 +/// Which Microsoft account a user operation targets. `Store` owns licenses and
 +/// entitlements and keeps the historical keyring keys; `Play` is the identity a
@@ -803,7 +886,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
  /// Semantic facade over the two storage tiers: a persistent, keychain-backed tier
  /// for STS/device/user credentials, and an ephemeral tier for short-lived
  /// per-relying-party XSTS tokens. Centralizes the read-merge-write pattern that was
-@@ -31,6 +59,7 @@ pub const PASSPORT_STS: &str = "http://Passport.NET/STS";
+@@ -65,6 +93,7 @@ mod credential_account_metadata_tests {
  pub struct TokenManager {
      persistent: Arc<dyn TokenBackend>,
      ephemeral: Arc<dyn ExpiringTokenBackend>,
@@ -811,7 +894,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
  }
  
  impl TokenManager {
-@@ -41,6 +70,7 @@ impl TokenManager {
+@@ -75,6 +104,7 @@ impl TokenManager {
          Self {
              persistent,
              ephemeral,
@@ -819,7 +902,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
          }
      }
  
-@@ -62,13 +92,51 @@ impl TokenManager {
+@@ -96,13 +126,51 @@ impl TokenManager {
          )
      }
  
@@ -875,7 +958,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
      }
  
      // ---- Device identity / license -----------------------------------------
-@@ -114,7 +182,11 @@ impl TokenManager {
+@@ -148,7 +216,11 @@ impl TokenManager {
          if let Some(session) = self.user_session()? {
              return Ok(session.tokens.get(address).cloned());
          }
@@ -888,7 +971,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
      }
  
      pub fn save_user_token(&self, address: String, token: Token) -> Result<(), TokenStoreError> {
-@@ -122,11 +194,16 @@ impl TokenManager {
+@@ -156,11 +228,16 @@ impl TokenManager {
              session.tokens.insert(address, token);
              return Self::write_verified(
                  &*self.persistent,
@@ -907,7 +990,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
      }
  
      pub fn get_user_sts_token(&self) -> Result<Token, TokenStoreError> {
-@@ -142,7 +219,7 @@ impl TokenManager {
+@@ -184,7 +261,7 @@ impl TokenManager {
          }
          let bytes = self
              .persistent
@@ -916,7 +999,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
              .ok_or(TokenStoreError::NotFound)?;
          Ok(serde_json::from_slice(&bytes)?)
      }
-@@ -150,14 +227,14 @@ impl TokenManager {
+@@ -192,14 +269,14 @@ impl TokenManager {
      pub fn save_user(&self, user: &User) -> Result<(), TokenStoreError> {
          Self::write_verified(
              &*self.persistent,
@@ -933,7 +1016,7 @@ index 1191a361fdf3e50b78efeba0e7540a6dd49c9395..4e9dabfb24bb1523f66bd8c89d91e4ae
              .map(|bytes| serde_json::from_slice(&bytes).map_err(Into::into))
              .transpose()
      }
-@@ -176,12 +253,14 @@ impl TokenManager {
+@@ -218,12 +295,14 @@ impl TokenManager {
          let session = UserSession { user, tokens };
          Self::write_verified(
              &*self.persistent,

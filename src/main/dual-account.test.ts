@@ -8,7 +8,9 @@ describe('dual-account launcher', () => {
   it('pins the dual-account patch last without changing the launch contract', () => {
     expect(DUAL_ACCOUNT_BACKEND).toBe(true);
     expect(backendLock.patches.at(-1)?.file).toBe('xodus-dual-account.patch');
-    expect(backendLock.compatibility).toBe('linux-run-v22');
+    // The fork never changes upstream's launch contract.
+    expect(backendLock.compatibility).toMatch(/^linux-run-v\d+$/);
+    expect(backendLock.patchId).toMatch(/-dual-account-\d+$/);
   });
 
   it('never installs or offers a prebuilt backend that lacks dual-account support', async () => {

@@ -50,8 +50,9 @@ jobs:
             pr=${url##*/}
             created=1
           fi
-          # PRs opened with GITHUB_TOKEN start no workflows: run them explicitly, once.
-          if [ "${created:-0}" = 1 ] && [ "$HAS_SYNC_TOKEN" != "true" ]; then
-            gh workflow run dual-account-checks.yml -R "$REPO" --ref dual-account -f pr="$pr"
+          # A PR with conflicts (or opened with GITHUB_TOKEN) starts no PR workflows:
+          # always start the Claude review, which merges and pushes; checks follow its push.
+          if [ "${created:-0}" = 1 ]; then
             gh workflow run claude-pr.yml -R "$REPO" --ref dual-account -f pr="$pr"
+            [ "$HAS_SYNC_TOKEN" = "true" ] || gh workflow run dual-account-checks.yml -R "$REPO" --ref dual-account -f pr="$pr"
           fi

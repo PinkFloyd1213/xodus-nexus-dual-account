@@ -1,10 +1,35 @@
+import { spawn } from 'node:child_process';
 import { constants, promises as fs } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { LauncherUpdate } from '../shared/types.js';
 import { isNewerVersion } from '../shared/utils.js';
 
-const REPO = 'domsvoboda/xodus-nexus';
+/**
+ * Start the installed AppImage once this process has exited. Electron's
+ * app.relaunch() runs its relauncher with no_new_privs, so the setuid fusermount
+ * cannot mount the new image ("Cannot mount AppImage"). A plain detached shell
+ * keeps normal privileges and waits for the single-instance lock to be released.
+ */
+/** Anonymous GitHub API calls are limited to 60 per hour per network. */
+export function githubFailure(response: Pick<Response, 'status' | 'headers'>): string {
+  const reset = Number(response.headers.get('x-ratelimit-reset'));
+  if ([403, 429].includes(response.status) && response.headers.get('x-ratelimit-remaining') === '0' && Number.isFinite(reset) && reset > 0) {
+    const time = new Date(reset * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `GitHub's hourly limit for update checks from this network is reached. Try again after ${time}.`;
+  }
+  return `GitHub update check returned HTTP ${response.status}.`;
+}
+
+export function relaunchAfterExit(target: string, pid = process.pid, start: typeof spawn = spawn): void {
+  const child = start('/bin/sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', target, String(pid)],
+    { detached: true, stdio: 'ignore', env: process.env });
+  child.unref();
+}
+
+// Dual-account fork: only its own releases may replace this AppImage.
+export const LAUNCHER_REPOSITORY = 'PinkFloyd1213/xodus-nexus-dual-account';
+const REPO = LAUNCHER_REPOSITORY;
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
 interface Asset { name: string; browser_download_url: string; size: number }
 interface Release { tag_name: string; draft?: boolean; prerelease?: boolean; assets: Asset[] }
@@ -14,7 +39,8 @@ function assetUrl(url: string, tag: string, name: string): boolean {
   return url === `https://github.com/${REPO}/releases/download/${tag}/${name}`;
 }
 export function launcherCandidate(releases: Release[], current: string): LauncherCandidate | undefined {
-  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name));
+  // Fork releases are tagged vX.Y.Z-dual.N (N = build), newer than upstream vX.Y.Z.
+  const stable = releases.filter(r => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+(?:-dual\.\d+)?$/.test(r.tag_name));
   stable.sort((a, b) => isNewerVersion(a.tag_name, b.tag_name) ? -1 : isNewerVersion(b.tag_name, a.tag_name) ? 1 : 0);
   for (const r of stable) {
     if (!isNewerVersion(r.tag_name, current)) continue;
@@ -44,7 +70,8 @@ export class LauncherUpdater {
     this.state = { currentVersion: version, checking: false, canInstall: false };
   }
   private async writableImage(): Promise<string> {
-    if (!this.image || !path.isAbsolute(this.image) || !this.image.endsWith('.AppImage')) throw new Error('In-app updates require a writable AppImage. Use the installer for this build.');
+    // Integrators such as Gear Lever rename images to lowercase *.appimage.
+    if (!this.image || !path.isAbsolute(this.image) || !/\.appimage$/i.test(this.image)) throw new Error('In-app updates require a writable AppImage. Use the installer for this build.');
     const target = await fs.realpath(this.image);
     const stat = await fs.lstat(target);
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o022)) throw new Error('The AppImage must be a regular file owned and writable only by your user.');
@@ -73,7 +100,7 @@ export class LauncherUpdater {
     this.state.checking = true; this.state.error = undefined; this.changed();
     try {
       const response = await this.fetcher(API, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15_000) });
-      if (!response.ok) throw new Error(`GitHub update check returned HTTP ${response.status}.`);
+      if (!response.ok) throw new Error(githubFailure(response));
       const releases = await response.json() as Release[];
       if (!Array.isArray(releases)) throw new Error('Invalid GitHub release list.');
       this.candidate = launcherCandidate(releases, this.version);

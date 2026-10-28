@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { AppSnapshot, AuthStatus, DownloadTask, Game, GameLaunchOptions, GameOperation, GameUpdate, InstallRequest, Settings } from '../shared/types.js';
+import type { AppSnapshot, AuthStatus, DownloadTask, PlayAccountStatus, Game, GameLaunchOptions, GameOperation, GameUpdate, InstallRequest, Settings } from '../shared/types.js';
 import { downloadFailure, safeProductId } from '../shared/utils.js';
 import { contentLicenseFailure } from '../shared/content-license.js';
 import { interfaceLanguagePreference } from '../shared/interface-language.js';
@@ -32,7 +32,7 @@ import { antiCheatEnvironment } from './anti-cheat.js';
 import { gameLaunchArguments, preparedGameWine } from './game-launch.js';
 import { prepareGameWrapper, type GameWrapper } from './game-wrapper.js';
 import { normalizeLaunchTools } from '../shared/launch-tools.js';
-import { LauncherUpdater } from './launcher-update.js';
+import { LauncherUpdater, relaunchAfterExit } from './launcher-update.js';
 import { copyDiagnosticFile, diagnosticLogFile, readDiagnosticTail } from './diagnostic-log.js';
 import { BackendDiagnostics, backendDiagnostic, setBackendDiagnostics } from './backend-diagnostics.js';
 import { createDiagnosticReport, reportSystemInfo, saveDiagnosticReport, validateReportContent } from './diagnostic-report.js';
@@ -125,9 +125,10 @@ const demoMode = process.env.XODUS_DEMO === '1';
 const walletUnlocker = new WalletUnlocker();
 const xboxSocial = new XboxSocialSessions(() => {
   const status = backend?.current;
-  return !shutdownStarted && !authState.running && authState.stored === true && authState.username
-    && status?.available && status.binaryPath && status.capabilities.commands.includes('social')
-    ? { account: authState.username, binary: status.binaryPath } : undefined;
+  // Friends and chat follow the Xbox (play) account, like the Xbox app.
+  const xbox = !shutdownStarted && authState.stored === true && status?.available ? xboxIdentity() : undefined;
+  return xbox && status?.binaryPath && status.capabilities.commands.includes('social')
+    ? { account: xbox.account, binary: status.binaryPath, play: xbox.play } : undefined;
 });
 const keyringSupport = new KeyringSupport(process.env, undefined, process.platform, undefined, {
   diagnostic: value => backendDiagnostic({ operation: 'keyring', event: 'diagnostic', keyring: value, elapsedMs: value.elapsedMs }),
@@ -156,6 +157,8 @@ let gameUpdateJob: Promise<void> | undefined;
 let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 let shortcuts: GameShortcuts;
 let accountProfile: AccountProfile;
+/** License (Store) account profile, read only while a separate Xbox account is shown. */
+let licenseProfile: AccountProfile | undefined;
 let preparingLaunch = false;
 let preparingInstall = false;
 let preparingContent = false;
@@ -226,7 +229,8 @@ function snapshot(): AppSnapshot {
     downloads: structuredClone(store.downloads.map(task => downloadCancellations.has(task.id)
       ? { ...task, cancelling: true, canPause: false, phase: 'Cancelling download and checking files…' } : task)),
     settings: structuredClone(store.settings),
-    auth: structuredClone({ ...authState, gamertag: accountProfile?.value?.gamertag, avatarDataUrl: accountProfile?.value?.avatarDataUrl, subscription: accountProfile?.value?.subscription }),
+    auth: structuredClone({ ...authState, gamertag: accountProfile?.value?.gamertag, avatarDataUrl: accountProfile?.value?.avatarDataUrl,
+      subscription: accountProfile?.value?.subscription ?? licenseProfile?.value?.subscription, licenseAvatarDataUrl: licenseProfile?.value?.avatarDataUrl }),
     launcherUpdate: structuredClone(launcherUpdater.state),
     gameUpdates: structuredClone(gameUpdates),
     downloadProgressSupported: Boolean(backend.current.capabilities.streamingProgressJson),
@@ -338,7 +342,7 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
   const status = backend.current;
   const key = accountRefreshKey();
   await accountRefresh.run(key, async signal => {
-    let next: Pick<AuthStatus, 'stored' | 'username' | 'note'>;
+    let next: Pick<AuthStatus, 'stored' | 'username' | 'note' | 'play'>;
     if (!status.available || !status.binaryPath) {
       next = { stored: null, username: undefined, note: 'Account status is unavailable because the Xodus backend is offline.' };
     } else if (!status.capabilities.account) {
@@ -375,21 +379,57 @@ async function refreshAccount(emit = true, afterAuth = false): Promise<AuthStatu
         }
       }
     }
+    next.play = status.capabilities.dualAccount && status.binaryPath && next.stored !== null
+      ? await readPlayAccount(status.binaryPath, signal) : undefined;
     return next;
   }, async next => {
-    if (authState.username !== next.username || next.stored !== true) xboxSocial.close();
+    if (authState.username !== next.username || next.stored !== true || authState.play?.username !== next.play?.username) xboxSocial.close();
     authState = { ...authState, ...next };
     accountLibrary.select(authState.stored === true ? authState.username : undefined,
       status.capabilities.library ? status.binaryPath : undefined, currentMarket());
-    gameActivities.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.gameActivity ? status.binaryPath : undefined);
-    gameAchievements.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.achievements ? status.binaryPath : undefined);
-    await accountProfile?.select(authState.stored === true ? authState.username : undefined,
-      status.capabilities.profile ? status.binaryPath : undefined, emit);
+    // Xbox data (gamertag, achievements, play time) follows the in-game account.
+    // Published right after a sign-in/out too, while authState.running is still set.
+    const xbox = xboxIdentity(true);
+    gameActivities.select(xbox?.account, status.capabilities.gameActivity ? status.binaryPath : undefined, xbox?.play);
+    gameAchievements.select(xbox?.account, status.capabilities.achievements ? status.binaryPath : undefined, xbox?.play);
+    await accountProfile?.select(xbox?.account, status.capabilities.profile ? status.binaryPath : undefined, emit, xbox?.play);
+    // After the in-game profile read, so both never renew device tokens at once.
+    const license = xbox?.play && authState.play?.fallback === false && authState.stored === true ? authState.username : undefined;
+    const licenseBinary = status.capabilities.profile ? status.binaryPath : undefined;
+    if (!license) await licenseProfile?.select(undefined);
+    else void accountProfile?.settled().then(() => licenseProfile?.select(license, licenseBinary, emit)).catch(() => { /* Optional picture. */ });
   }, () => key === accountRefreshKey() && (!authState.running || afterAuth));
   if (emit) emitSnapshot();
   return structuredClone(authState);
+}
+
+/** `account --account play`: the account games run as, never a sign-in. */
+async function readPlayAccount(binary: string, signal: AbortSignal): Promise<PlayAccountStatus> {
+  const result = await readAccount(binary, signal, ['--account', 'play']).catch(() => ({ code: -1, output: '' }));
+  try {
+    if (result.code !== 0) throw Error('play account unavailable');
+    const line = result.output.split('\n').map(entry => entry.trim()).reverse().find(entry => entry.startsWith('{'));
+    const value = JSON.parse(line ?? '') as { stored?: unknown; username?: unknown; fallback?: unknown };
+    if (typeof value.fallback !== 'boolean') throw Error('unexpected play account response');
+    if (value.stored === true && typeof value.username === 'string' && value.username.trim()) {
+      return { stored: true, username: value.username.trim(), fallback: value.fallback };
+    }
+    if (value.stored === false) return { stored: false, fallback: value.fallback };
+    throw Error('unexpected play account response');
+  } catch { return { stored: null, fallback: true }; }
+}
+
+/** Xbox identity shown like the Xbox app: the in-game account on dual-account
+ * backends (which falls back to the license account), otherwise the account. */
+function xboxIdentity(duringAuth = false): { account: string; play: boolean } | undefined {
+  if (authState.running && !duringAuth) return undefined;
+  if (backend.current.capabilities.dualAccount) {
+    if (authState.play?.stored === true && authState.play.username) return { account: authState.play.username, play: true };
+    // Never show the license account's Xbox data while the in-game account is unreadable.
+    if (authState.play?.stored === null) return undefined;
+  }
+  if (authState.stored === true && authState.username) return { account: authState.username, play: false };
+  return undefined;
 }
 
 async function refreshInitialAccount(): Promise<void> {
@@ -437,9 +477,11 @@ async function prepareSystemWallet(): Promise<void> {
   if (directShortcut) mainWindow?.hide();
 }
 
-async function runAuth(command: 'login' | 'logout'): Promise<void> {
+async function runAuth(command: 'login' | 'logout', play = false): Promise<void> {
   ensureIdle();
   const binary = requireBackend(command);
+  if (play && !backend.current.capabilities.dualAccount) throw Error('Use the dual-account backend in Settings to add an Xbox account.');
+  const roleArgs = play ? ['--account', 'play'] : [];
   const id = `auth-${randomUUID()}`;
   accountRefresh.invalidate();
   accountLibrary.reset();
@@ -456,11 +498,14 @@ async function runAuth(command: 'login' | 'logout'): Promise<void> {
     const view = fallbackAuthViewFactory(request => authViewFactory(mainWindow ?? undefined, undefined, request, nativeText), () => browserAuthViewFactory());
     if (shutdownStarted) throw Error('The launcher is closing.');
     await accountProfile.select(undefined);
+    await licenseProfile?.select(undefined);
     if (shutdownStarted) throw Error('The launcher is closing.');
-    const tracked = command === 'login' ? startAuthTransport(binary, view)
-      // Explicit sign-out removes the local device registration too. Ordinary
-      // sign-in must keep it, including when renewing an existing account.
-      : spawnTracked(binary, ['logout', '--device'], { onLine: (line) => emitLog('auth', line) });
+    const tracked = command === 'login' ? (play ? startAuthTransport(binary, view, undefined, undefined, roleArgs) : startAuthTransport(binary, view))
+      // Explicit sign-out removes the local device registration too (on a
+      // dual-account backend that also signs out the play account bound to it).
+      // Ordinary sign-in must keep it, including when renewing an existing
+      // account. Signing out only the Xbox (play) account keeps the device.
+      : spawnTracked(binary, play ? ['logout', ...roleArgs] : ['logout', '--device'], { onLine: (line) => emitLog('auth', line) });
     operations.set(id, tracked.child);
     const result = await tracked.result;
     accountRefresh.invalidate();
@@ -479,9 +524,9 @@ async function runAuth(command: 'login' | 'logout'): Promise<void> {
   }
 }
 
-function requestAuth(command: 'login' | 'logout'): Promise<void> {
+function requestAuth(command: 'login' | 'logout', play = false): Promise<void> {
   if (authJob) return Promise.reject(Error('A sign-in operation is already in progress.'));
-  const job = runAuth(command); authJob = job;
+  const job = runAuth(command, play); authJob = job;
   const clear = () => { if (authJob === job) authJob = undefined; };
   void job.then(clear, clear); return job;
 }
@@ -1229,6 +1274,9 @@ function registerDemoIpc(catalogMarket: () => string): void {
   ipcMain.handle('save-diagnostic-report', (_event, content: unknown) => saveReviewedReport(content));
   ipcMain.handle('login', () => {});
   ipcMain.handle('logout', () => {});
+  ipcMain.handle('login-play', () => {});
+  ipcMain.handle('logout-play', () => {});
+  ipcMain.handle('backend-restore-previous', () => {});
   ipcMain.handle('catalog-search', (_event, query: string, cursor?: string) => catalog.search(query, catalogMarket(), cursor));
   ipcMain.handle('catalog-featured', () => catalog.featured(catalogMarket()));
   ipcMain.handle('account-library', (_event, kind: 'all' | 'owned' | 'gamepass') => demoAccountLibrary(kind, demoArtwork));
@@ -1277,6 +1325,7 @@ function registerIpc(): void {
   ipcMain.handle('backend-check-update', async () => { const value = await backend.checkUpdate(); emitSnapshot(); return value; });
   ipcMain.handle('backend-update', async () => { await backend.update(emitSnapshot); await refreshAccount(); });
   ipcMain.handle('backend-rebuild', async () => { await backend.rebuild(emitSnapshot); await refreshAccount(); });
+  ipcMain.handle('backend-restore-previous', async () => { await backend.restorePrevious(emitSnapshot); await refreshAccount(); });
   ipcMain.handle('runtime-refresh', async () => { const value = await runtime.refresh(); await syncManagedWinePath(); await refreshAccount(false); emitSnapshot(); return value; });
   ipcMain.handle('runtime-check-update', async () => { const value = await runtime.check(); emitSnapshot(); return value; });
   ipcMain.handle('runtime-check-nexus', async () => { const value = await runtime.checkNexus(); emitSnapshot(); return value; });
@@ -1347,7 +1396,7 @@ function registerIpc(): void {
       if (externalEnvironment[key] === undefined) delete process.env[key];
       else process.env[key] = externalEnvironment[key];
     }
-    app.relaunch({ execPath: launcherUpdater.targetPath, args: [] }); app.quit();
+    relaunchAfterExit(launcherUpdater.targetPath); app.quit();
   });
   ipcMain.handle('check-game-updates', (_event, id?: string) => {
     if (gameUpdateJob) return gameUpdateJob;
@@ -1369,6 +1418,8 @@ function registerIpc(): void {
   });
   ipcMain.handle('login', () => requestAuth('login'));
   ipcMain.handle('logout', () => requestAuth('logout'));
+  ipcMain.handle('login-play', () => requestAuth('login', true));
+  ipcMain.handle('logout-play', () => requestAuth('logout', true));
   ipcMain.handle('catalog-search', (_event, query: string, cursor?: string) => {
     return catalog.search(query, catalogMarket(), cursor);
   });
@@ -1501,30 +1552,32 @@ function registerIpc(): void {
     if (typeof id !== 'string' || typeof refresh !== 'boolean') throw Error('Invalid activity request.');
     const game = store.games.find(game => game.id === id);
     if (!game) throw Error('Game not found.');
-    if (authState.running || authState.stored !== true || !authState.username) return { status: 'signed-out' };
+    const xbox = xboxIdentity();
+    if (!xbox) return { status: 'signed-out' };
     if (!backend.current.capabilities.gameActivity || !backend.current.binaryPath) return { status: 'unsupported' };
-    const account = authState.username, binary = backend.current.binaryPath;
-    gameActivities.select(account, binary);
+    const account = xbox.account, binary = backend.current.binaryPath;
+    gameActivities.select(account, binary, xbox.play);
     const title = await installedTitleId(game.path).catch(() => undefined);
     if (!title) return { status: 'unavailable' };
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     const activity = await gameActivities.get(title, refresh);
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     return activity;
   });
   ipcMain.handle('game-achievements', async (_event, id: string, refresh = false) => {
     if (typeof id !== 'string' || typeof refresh !== 'boolean') throw Error('Invalid achievements request.');
     const game = store.games.find(game => game.id === id);
     if (!game) throw Error('Game not found.');
-    if (authState.running || authState.stored !== true || !authState.username) return { status: 'signed-out' };
+    const xbox = xboxIdentity();
+    if (!xbox) return { status: 'signed-out' };
     if (!backend.current.capabilities.achievements || !backend.current.binaryPath) return { status: 'unsupported' };
-    const account = authState.username, binary = backend.current.binaryPath;
-    gameAchievements.select(account, binary);
+    const account = xbox.account, binary = backend.current.binaryPath;
+    gameAchievements.select(account, binary, xbox.play);
     const title = await installedTitleId(game.path).catch(() => undefined);
     if (!title) return { status: 'unavailable' };
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     const value = await gameAchievements.get(title, refresh);
-    if (authState.running || authState.stored !== true || account !== authState.username || binary !== backend.current.binaryPath) return { status: 'error' };
+    if (account !== xboxIdentity()?.account || binary !== backend.current.binaryPath) return { status: 'error' };
     return value;
   });
   ipcMain.handle('launch-game', (_event, id: string) => launchGame(id));
@@ -1856,7 +1909,7 @@ app.whenReady().then(async () => {
   store = new StateStore(app.getPath('userData'));
   await store.load();
   downloadCleanup = new DownloadCleanup(app.getPath('userData'));
-  accountProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, dataUrl => {
+  const normalizePicture = (dataUrl: string): string | undefined => {
     try {
       const picture = nativeImage.createFromDataURL(dataUrl);
       if (picture.isEmpty()) return;
@@ -1865,7 +1918,9 @@ app.whenReady().then(async () => {
       const scale = Math.min(1, 256 / Math.max(width, height));
       return picture.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: 'best' }).toDataURL();
     } catch { return undefined; }
-  });
+  };
+  accountProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, normalizePicture);
+  licenseProfile = new AccountProfile(app.getPath('userData'), scheduleSnapshot, normalizePicture, undefined, 'xbox-profile-license.json');
   launcherUpdater = new LauncherUpdater(app.getVersion(), app.isPackaged ? process.env.APPIMAGE : undefined, app.getPath('userData'), scheduleSnapshot);
   await launcherUpdater.initialize();
   const dataHome = process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME)
@@ -1951,6 +2006,7 @@ app.on('before-quit', (event) => {
   installQueue.stop();
   accountLibrary.reset();
   accountProfile?.cancel();
+  licenseProfile?.cancel();
   accountRefresh.invalidate();
   if (shutdownStarted || (!xboxSocial.busy && !walletUnlocker.busy && !backendDiagnostics?.pendingWrites && !authJob && !preparingInstall && downloadCancellations.size === 0 && installQueue.size === 0 && operations.size === 0 && serviceSessions.size === 0 && gameInviteBridges.size === 0 && !checkingGameUpdates && !launcherUpdater?.state.updating)) return;
   event.preventDefault();

@@ -26,6 +26,8 @@ jobs:
           # edits .github/workflows; GITHUB_TOKEN works otherwise.
           GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+          # SYNC_TOKEN has no Actions permission: dispatch with GITHUB_TOKEN.
+          DISPATCH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -53,6 +55,6 @@ jobs:
           # A PR with conflicts (or opened with GITHUB_TOKEN) starts no PR workflows:
           # always start the Claude review, which merges and pushes; checks follow its push.
           if [ "${created:-0}" = 1 ]; then
-            gh workflow run claude-pr.yml -R "$REPO" --ref dual-account -f pr="$pr"
-            [ "$HAS_SYNC_TOKEN" = "true" ] || gh workflow run dual-account-checks.yml -R "$REPO" --ref dual-account -f pr="$pr"
+            GH_TOKEN=$DISPATCH_TOKEN gh workflow run claude-pr.yml -R "$REPO" --ref dual-account -f pr="$pr"
+            [ "$HAS_SYNC_TOKEN" = "true" ] || GH_TOKEN=$DISPATCH_TOKEN gh workflow run dual-account-checks.yml -R "$REPO" --ref dual-account -f pr="$pr"
           fi

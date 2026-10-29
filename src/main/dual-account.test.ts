@@ -3,6 +3,7 @@ import { BackendManager, DUAL_ACCOUNT_BACKEND } from './backend';
 import { backendLock } from './backend-package';
 import { GameAchievementsReader } from './game-achievements';
 import { GameActivities } from './game-activity';
+import { nativeSocialArgs, setNativeSocialPlay } from './xbox-social-transport';
 
 describe('dual-account launcher', () => {
   it('pins the dual-account patch last without changing the launch contract', () => {
@@ -194,5 +195,13 @@ describe('in-app updates after Gear Lever integration', () => {
       await updater.initialize();
       expect(updater.state.canInstall).toBe(false);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
+  it('runs native social as the play account only while one is stored', () => {
+    expect(nativeSocialArgs(['friends'])).toEqual(['native-social', 'friends']);
+    setNativeSocialPlay(true);
+    expect(nativeSocialArgs(['listen'])).toEqual(['native-social', '--account', 'play', 'listen']);
+    setNativeSocialPlay(false);
+    expect(nativeSocialArgs(['friends'])).toEqual(['native-social', 'friends']);
   });
 });

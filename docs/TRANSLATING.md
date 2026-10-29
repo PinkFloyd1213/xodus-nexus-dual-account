@@ -60,6 +60,35 @@ languages (for example `fr,es`). One run processes all eligible suggestions and
 produces a report of accepted and skipped keys. It does not build, publish, merge
 or change bundled translation files.
 
+Choose `review-texts` to include eligible English/target UI pairs and blocked
+suggestions for language review. These are public project strings, without contributor
+identifiers. Other modes omit text. Copy the resulting `reviewDigest` into the
+workflow's `review_digest` input when accepting that batch: it stops before writes
+if eligible texts changed. Use `exclude` (for example `fr:auth.browser`) to leave
+incorrect wording pending while accepting the rest. The digest covers the whole
+eligible batch before exclusions. Keep the same selected languages in both runs.
+
+For individually checked conflicts, identical technical terms or typo corrections,
+a maintainer can commit explicit selections in `.github/translations/review-plan.json`.
+Each selection records the exact English source, previous translation and state,
+chosen suggestion and final text. Compute the canonical plan digest locally:
+
+```sh
+node --input-type=module -e 'import fs from "node:fs"; import {planDigest} from "./scripts/tolgee-review-plan.mjs"; console.log(planDigest(JSON.parse(fs.readFileSync(".github/translations/review-plan.json", "utf8"))))'
+```
+
+Run `preview-reviewed-plan` with that digest in `review_digest`, then
+`apply-reviewed-plan` with the same digest after review. The digest covers the
+parsed selections, not the whitespace in the JSON file.
+The tool checks the entire plan before writing, refreshes each batch, accepts the
+original suggestion to preserve attribution, applies any checked correction and
+verifies the final text before marking it Reviewed. Comments, QA issues, outdated
+sources and changed cells stop the operation. Competing suggestions are not deleted.
+For an interrupted batch, inspect its report and current values before preparing
+a new plan. An explicit `existing: true` selection can review or correct an exact
+already-accepted text without accepting the original suggestion again. It requires
+that text and its current Translated or Reviewed state in the selection snapshot.
+
 Configure a separate `TOLGEE_REVIEW_API_KEY` repository secret, restricted to
 project **36162**, with `keys.view`, `translations.view`, `translations.edit` and
 `translations.state-edit`. Restrict editing and state changes to target languages
@@ -78,8 +107,15 @@ still have incorrect meaning, grammar or even the wrong Latin-script language.
 `accept-and-review` marks eligible entries `REVIEWED` for export based on this
 technical policy. Choose `accept` if a language reviewer should check them first.
 Avoid editing the same entries while the batch runs: Tolgee's accept API has no
-atomic compare-and-set guard. The tool rechecks immediately before acceptance,
-verifies the result and stops on errors without retrying uncertain writes.
+atomic compare-and-set guard. The tool refreshes and verifies small groups of up
+to 20 candidates before acceptance, then verifies each accepted value before
+marking it reviewed. The snapshot is not a lock; do not edit the same entries
+while it runs. It stops on errors without retrying uncertain writes.
+Read-only requests limited with HTTP 429 wait for a bounded `Retry-After` before
+retrying (up to three attempts, maximum six minutes per wait). With no header,
+it waits for the documented five-minute window. Bulk reads and conservative
+request pacing reduce pressure on that limit. Mutating requests are never
+automatically retried.
 
 For local use, supply the key through a private environment, not a command line
 or a committed file:
@@ -91,7 +127,8 @@ npm run i18n:accept -- --languages fr --apply --reviewed
 
 The first command previews without writes. The second accepts eligible French
 suggestions and marks them reviewed. Reports contain key names, language tags and
-outcomes, not credentials, contributor identifiers or translation text.
+outcomes, not credentials or contributor identifiers. Only the explicit
+`review-texts` mode includes public UI text for language review (`--texts` locally).
 
 ### Reviewed translations back into Git
 

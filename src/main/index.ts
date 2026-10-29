@@ -1130,7 +1130,7 @@ async function prepareGameLaunch(id: string): Promise<void> {
     delete environment.XODUS_ACCOUNT_HASH;
     if (await storeDiscoveryRuntime(wine)) {
       const access = ownedAccess ? await ownedAccess(OWNED_ACCESS_WAIT_MS) : accountLibrary.peekAccess();
-      const related = await contentManager().relatedProducts(game, access, currentMarket()).catch(() => {
+      const related = await contentManager().relatedProducts(game, access, currentMarket(), undefined, offlineLaunch).catch(() => {
         addGameLog('Additional DLC discovery unavailable. Continuing with package-declared content.');
         return [] as string[];
       });

@@ -60,13 +60,34 @@ languages (for example `fr,es`). One run processes all eligible suggestions and
 produces a report of accepted and skipped keys. It does not build, publish, merge
 or change bundled translation files.
 
-Choose `review-texts` to include the eligible English/target UI pairs for language
-review in the report. These are public project strings, without contributor
+Choose `review-texts` to include eligible English/target UI pairs and blocked
+suggestions for language review. These are public project strings, without contributor
 identifiers. Other modes omit text. Copy the resulting `reviewDigest` into the
 workflow's `review_digest` input when accepting that batch: it stops before writes
 if eligible texts changed. Use `exclude` (for example `fr:auth.browser`) to leave
 incorrect wording pending while accepting the rest. The digest covers the whole
 eligible batch before exclusions. Keep the same selected languages in both runs.
+
+For individually checked conflicts, identical technical terms or typo corrections,
+a maintainer can commit explicit selections in `.github/translations/review-plan.json`.
+Each selection records the exact English source, previous translation and state,
+chosen suggestion and final text. Compute the canonical plan digest locally:
+
+```sh
+node --input-type=module -e 'import fs from "node:fs"; import {planDigest} from "./scripts/tolgee-review-plan.mjs"; console.log(planDigest(JSON.parse(fs.readFileSync(".github/translations/review-plan.json", "utf8"))))'
+```
+
+Run `preview-reviewed-plan` with that digest in `review_digest`, then
+`apply-reviewed-plan` with the same digest after review. The digest covers the
+parsed selections, not the whitespace in the JSON file.
+The tool checks the entire plan before writing, refreshes each batch, accepts the
+original suggestion to preserve attribution, applies any checked correction and
+verifies the final text before marking it Reviewed. Comments, QA issues, outdated
+sources and changed cells stop the operation. Competing suggestions are not deleted.
+For an interrupted batch, inspect its report and current values before preparing
+a new plan. An explicit `existing: true` selection can review or correct an exact
+already-accepted text without accepting the original suggestion again. It requires
+that text and its current Translated or Reviewed state in the selection snapshot.
 
 Configure a separate `TOLGEE_REVIEW_API_KEY` repository secret, restricted to
 project **36162**, with `keys.view`, `translations.view`, `translations.edit` and

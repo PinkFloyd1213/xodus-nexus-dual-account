@@ -22,7 +22,7 @@ export function fromTolgee(text) {
   return result;
 }
 
-function tokens(text) {
+export function tokens(text) {
   return (text.match(/\{\{[a-zA-Z][a-zA-Z0-9_]*\}\}|https?:\/\/[^\s<>]+|`[^`]+`|\b(?:Xbox|Microsoft|Xodus|Nexus|Tolgee|Steam)\b|--[a-z][a-z0-9-]*/g) ?? []).sort();
 }
 
@@ -78,8 +78,9 @@ export function assess(row, language, english) {
 export function createApi(key, fetcher = fetch, wait = pause, interval = 0) {
   if (typeof key !== 'string' || !key.trim() || /[\r\n]/.test(key)) throw Error('Set TOLGEE_REVIEW_API_KEY to a project-scoped review key.');
   let lastRequest = 0;
-  return async (route, method = 'GET') => {
+  return async (route, method = 'GET', body) => {
     if (!route.startsWith(`${project}/`) || route.includes('..') || /[\\#\r\n]/.test(route) || !['GET', 'PUT'].includes(method)) throw Error('Invalid API operation.');
+    if (body !== undefined && (method !== 'PUT' || route !== `${project}/translations` || !body || typeof body !== 'object')) throw Error('Invalid translation update body.');
     let response;
     for (let attempt = 0; attempt < 3; attempt++) {
       const spacing = interval - (Date.now() - lastRequest);
@@ -87,7 +88,8 @@ export function createApi(key, fetcher = fetch, wait = pause, interval = 0) {
       lastRequest = Date.now();
       try {
         response = await fetcher(`https://app.tolgee.io${route}`, {
-          method, headers: { 'X-API-Key': key, accept: 'application/json' },
+          method, headers: { 'X-API-Key': key, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           redirect: 'error', signal: AbortSignal.timeout(15000),
         });
       } catch { throw Error(`Tolgee ${method} transport failed. No automatic retry; check the report before rerunning.`); }
@@ -119,12 +121,13 @@ export function createApi(key, fetcher = fetch, wait = pause, interval = 0) {
   };
 }
 
-async function pages(api, route, collection, limit) {
+export async function pages(api, route, collection, limit, inspectPage) {
   const all = []; const seen = new Set();
   for (let page = 0; page < 100; page++) {
     const value = await api(`${route}${route.includes('?') ? '&' : '?'}size=100&page=${page}`);
     const rows = value._embedded?.[collection] ?? (value.page?.totalElements === 0 ? [] : undefined);
     if (!Array.isArray(rows) || !Number.isInteger(value.page?.totalPages) || value.page.totalPages < 0 || value.page.totalPages > 100 || value.page.number !== page) throw Error('Invalid Tolgee pagination.');
+    inspectPage?.(value);
     for (const row of rows) {
       const identity = collection === 'keys' ? row.keyId : row.id;
       if (!id(identity) || seen.has(identity) || all.length >= limit) throw Error('Duplicate or excessive Tolgee records.');
@@ -136,7 +139,7 @@ async function pages(api, route, collection, limit) {
   throw Error('Too many Tolgee pages.');
 }
 
-function viewRoute(tags, keyId) {
+export function viewRoute(tags, keyId) {
   const query = new URLSearchParams();
   for (const tag of tags) query.append('languages', tag);
   query.set('sort', 'keyId,asc');
@@ -161,7 +164,18 @@ export async function acceptSuggestions({ api, english, apply = false, reviewed 
     if (extra !== undefined || !targets.some(language => language.tag === tag) || !own(english, key)) throw Error('Invalid review exclusion.');
   }
   // Snapshot all pages before mutation, never paginate a shrinking suggestion filter.
-  const rows = await pages(api, viewRoute(['en', ...targets.map(value => value.tag)]), 'keys', 10000);
+  const requestedLanguages = ['en', ...targets.map(value => value.tag)];
+  let returnedLanguages;
+  const rows = await pages(api, viewRoute(requestedLanguages), 'keys', 10000, value => {
+    const tags = value.selectedLanguages?.map(language => language.tag).sort();
+    if (!Array.isArray(tags) || !tags.every(canonical) || new Set(tags).size !== tags.length ||
+        returnedLanguages && JSON.stringify(returnedLanguages) !== JSON.stringify(tags)) throw Error('Invalid or changing translation-view languages.');
+    returnedLanguages = tags;
+  });
+  report.requestedLanguages = requestedLanguages;
+  report.returnedLanguages = returnedLanguages;
+  report.unavailableLanguages = requestedLanguages.filter(tag => !returnedLanguages.includes(tag));
+  if (apply && report.unavailableLanguages.length) throw Error('The API omitted requested languages. No writes performed; inspect language coverage.');
   const pending = [];
   for (const row of rows) for (const language of targets) {
     const cell = row.translations?.[language.tag];
@@ -175,7 +189,21 @@ export async function acceptSuggestions({ api, english, apply = false, reviewed 
     source: english[row.keyName], translation: decision.translated }))
     .sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0);
   report.reviewDigest = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
-  if (texts) report.reviewSnapshot = snapshot;
+  if (texts) {
+    report.reviewSnapshot = snapshot;
+    // Public UI text only, never suggestion/contributor/account identifiers.
+    // Include blocked candidates so a maintainer can review conflicts and typos
+    // without weakening the automatic acceptance policy.
+    report.suggestionSnapshot = rows.flatMap(row => targets.flatMap(language => {
+      const cell = row.translations?.[language.tag];
+      if (!cell?.activeSuggestionCount) return [];
+      return [{ language: language.tag, key: row.keyName,
+        source: row.translations.en?.text, current: cell.text, state: cell.state,
+        reason: assess(row, language, english).reason,
+        suggestions: (cell.suggestions ?? []).filter(value => value.state === 'ACTIVE')
+          .map(value => ({ text: value.translation, plural: value.isPlural })) }];
+    }));
+  }
   if (reviewDigest !== undefined && report.reviewDigest !== reviewDigest) throw Error('Suggestions changed since the language review. No writes performed.');
   const excluded = new Set(exclude);
   for (const { language, row, entry } of pending) if (excluded.has(`${language.tag}:${row.keyName}`)) entry.status = 'excluded-by-language-review';

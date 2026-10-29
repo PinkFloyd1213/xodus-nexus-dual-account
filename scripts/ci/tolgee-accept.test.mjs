@@ -12,7 +12,8 @@ const cell = () => ({ id: 20, text: null, state: 'UNTRANSLATED', outdated: false
   activeSuggestionCount: 1, suggestions: [suggestion()] });
 const row = () => ({ keyId: 10, keyName: 'common.cancel_game', keyIsPlural: false, keyNamespace: null, branch: 'main',
   translations: { en: { text: 'Cancel {game}?' }, fr: cell(), es: { ...cell(), activeSuggestionCount: 0, suggestions: [] } } });
-const page = (collection, rows, number = 0, totalPages = 1) => ({ _embedded: { [collection]: rows }, page: { number, totalPages, totalElements: rows.length } });
+const page = (collection, rows, number = 0, totalPages = 1) => ({ _embedded: { [collection]: rows }, page: { number, totalPages, totalElements: rows.length },
+  ...(collection === 'keys' ? { selectedLanguages: languages.map(({ tag }) => ({ tag })) } : {}) });
 const clone = value => structuredClone(value);
 
 function fixture(options = {}) {
@@ -25,7 +26,7 @@ function fixture(options = {}) {
     if (url.pathname === `${stem}/translations`) {
       viewReads++;
       options.beforeView?.(current, viewReads);
-      return page('keys', [clone(current)]);
+      return { ...page('keys', [clone(current)]), ...(options.viewLanguages ? { selectedLanguages: options.viewLanguages.map(tag => ({ tag })) } : {}) };
     }
     if (url.pathname === `${stem}/languages/2/key/10/suggestion`) {
       throw Error('Separate suggestion listing requires unnecessary suggest/manage permissions.');
@@ -138,6 +139,16 @@ test('preview is read-only and report excludes texts, contributor data and ident
   assert.doesNotMatch(JSON.stringify(report), /Annuler|languageId|keyId|author|translation:/);
 });
 
+test('report actual language coverage and refuse partial acceptance when the API omits a requested language', async () => {
+  const preview = fixture({ viewLanguages: ['en', 'fr'] });
+  const report = await acceptSuggestions({ api: preview.api, english });
+  assert.deepEqual(report.returnedLanguages, ['en', 'fr']);
+  assert.deepEqual(report.unavailableLanguages, ['es']);
+  const actual = fixture({ viewLanguages: ['en', 'fr'] });
+  await assert.rejects(acceptSuggestions({ api: actual.api, english, apply: true }), /omitted requested languages/);
+  assert.ok(actual.calls.every(call => call.method === 'GET'));
+});
+
 test('accept rechecks state and single active view candidate using minimal scopes, retaining authorship', async () => {
   const { api, calls, current } = fixture();
   const report = await acceptSuggestions({ api, english, apply: true, reviewed: true, tags: ['fr'] });
@@ -163,11 +174,24 @@ test('opt-in review snapshot exports only public UI pairs and binds approval to 
   assert.deepEqual(report.reviewSnapshot, [{ language: 'fr', key: 'common.cancel_game', source: 'Cancel {{game}}?', translation: 'Annuler {{game}} ?' }]);
   assert.match(report.reviewDigest, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(report.reviewSnapshot), /author|languageId|keyId|suggestionId/);
+  assert.deepEqual(report.suggestionSnapshot, [{ language: 'fr', key: 'common.cancel_game', source: 'Cancel {game}?',
+    current: null, state: 'UNTRANSLATED', reason: 'eligible', suggestions: [{ text: 'Annuler {game} ?', plural: false }] }]);
+  assert.doesNotMatch(JSON.stringify(report.suggestionSnapshot), /author|languageId|keyId|suggestionId/);
   const actual = fixture();
   assert.equal((await acceptSuggestions({ api: actual.api, english, apply: true, reviewed: true, reviewDigest: report.reviewDigest })).reviewed, 1);
   const changed = fixture({ beforeView: value => { value.translations.fr.suggestions[0].translation = 'Ignorer {game} ?'; } });
   await assert.rejects(acceptSuggestions({ api: changed.api, english, apply: true, reviewDigest: report.reviewDigest }), /changed since/);
   assert.ok(changed.calls.every(call => call.method === 'GET'));
+});
+
+test('explicit text audit includes blocked candidates without accepting them or exporting identities', async () => {
+  const preview = fixture({ beforeView: value => { value.translations.fr.suggestions[0].translation = 'Annuler ?'; } });
+  const report = await acceptSuggestions({ api: preview.api, english, texts: true });
+  assert.deepEqual(report.reviewSnapshot, []);
+  assert.equal(report.suggestionSnapshot[0].reason, 'invalid-text-or-parameters');
+  assert.equal(report.suggestionSnapshot[0].suggestions[0].text, 'Annuler ?');
+  assert.ok(preview.calls.every(call => call.method === 'GET'));
+  assert.doesNotMatch(JSON.stringify(report.suggestionSnapshot), /author|languageId|keyId|suggestionId/);
 });
 
 test('language-review exclusions are validated and never accepted or reviewed', async () => {

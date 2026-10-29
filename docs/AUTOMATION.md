@@ -25,9 +25,11 @@ exact copy of upstream.
 | `patch-export.yml` | backend | push to `dual-account` touching `crates/` | regenerates `xodus-dual-account.patch` and pushes it to the open Nexus `upstream-sync` PR, or opens a Nexus PR |
 | `dual-account.yml` | backend | push or PR on `dual-account` | build and tests of the dual-account backend |
 
-Upstream workflows that only serve upstream releases (`backend.yml`,
-`runtime.yml`, `release.yml`, `wiki.yml`, `rust.yml`) are **disabled** in the
-forks through the Actions settings, without editing the files.
+Upstream workflows that only serve upstream releases or upstream's Tolgee
+project (`backend.yml`, `runtime.yml`, `release.yml`, `wiki.yml`, `rust.yml`,
+`translations.yml`, `translation-suggestions.yml`) are **disabled** in the
+forks through the Actions settings, without editing the files. Disable any new
+upstream workflow that needs upstream's secrets the same way.
 
 The backend comes from **this owner's** repository:
 `assets/backend-source.lock.json` → `repository` = `xodus-dual-account`. When

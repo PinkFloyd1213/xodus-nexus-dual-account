@@ -165,6 +165,7 @@ but have not been verified and may encounter compatibility issues.
 | Persona 3 Reload | Yes | Gameplay, network features and cloud saves work; expansion pass not recognized. ([user report](https://github.com/domsvoboda/xodus-nexus/issues/317)) |
 | Forza Motorsport | Partial | Unreleased runtime: intro completed. Online play unverified. |
 | Age of Empires II: Definitive Edition | Yes | Unreleased runtime: single-player gameplay works. Online play unverified. |
+| Age of Empires III: Definitive Edition | Yes | Unreleased runtime: works. Online play unverified. |
 | Age of Empires: Definitive Edition | Partial | Unreleased runtime: menu and sign-in work; Multiplayer and LAN menus enabled. Gameplay unverified. |
 | Age of Empires IV | Startup verified | Unreleased runtime: starts successfully; online play unverified. |
 | Gears of War: E-Day | Yes | Playable online; Xbox playing status works. |

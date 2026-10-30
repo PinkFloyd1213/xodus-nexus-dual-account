@@ -1,3 +1,4 @@
+import {SteamKeyboard} from './steam-keyboard.js';
 import type {XboxProfileRequest} from '../shared/types.js';
 import {XboxSocial as NativeXboxSocial} from './xbox-native-social.js';
 import {resetSocialTransport} from './xbox-social-transport.js';
@@ -1487,7 +1488,9 @@ async function acceptPartyInvite(event:Electron.IpcMainInvokeEvent,offer:string,
  if(!voiceHost.owns(event)||!context||!current||context.account!==current.account||context.binary!==current.binary)throw Error('Xbox party account changed. Select the invitation again.');
  return xboxParty.accept(offer,handle);
 }
+const steamKeyboard=new SteamKeyboard();
 function registerIpc(): void {
+  ipcMain.handle('show-touch-keyboard',event=>steamKeyboard.show(event,mainWindow));
   ipcMain.handle('xbox-overlay-recording',async(event,recording:unknown)=>{
     if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame||typeof recording!=='boolean')throw Error('Invalid shortcut recording request.');
     if(recording&&!mainWindow?.isFocused())throw Error('Focus Nexus to record a shortcut.');

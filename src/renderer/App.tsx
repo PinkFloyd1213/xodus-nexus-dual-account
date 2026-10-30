@@ -926,6 +926,11 @@ export function SettingsPage({ data, toast }: { data: AppSnapshot; toast: (value
       <div className="save-row"><span>{ui('settings.language_help')}</span><button className="primary" disabled={Boolean(busy)} onClick={() => invoke('save-language', () => window.launcher.updateSettings({ interfaceLanguage: form.interfaceLanguage ?? 'system' }), ui('settings.language_saved'))}>{ui('settings.save_language')}</button></div>
     </section>
 
+    <section className="settings-card compact">
+      <label className="tool-checkbox"><input type="checkbox" checked={form.closeToTray===true} disabled={Boolean(busy)} onChange={event=>{const closeToTray=event.target.checked;setForm({...form,closeToTray});void invoke('close-to-tray',()=>window.launcher.updateSettings({closeToTray}),ui('settings.tray_saved'));}}/><span>{ui('settings.close_to_tray')}</span></label>
+      <small>{ui('settings.close_to_tray_help')}</small>
+    </section>
+
     <section className="settings-card compact launcher-card">
       {data.launcherUpdate?.phase ? <p>{uiText(data.launcherUpdate.phase)}</p> : null}
       {data.launcherUpdate?.updating ? <div className="progress-track"><i style={{ width: `${data.launcherUpdate.progress ?? 0}%` }} /></div> : null}
@@ -1117,6 +1122,7 @@ export default function App() {
   const [libraryFilters, setLibraryFilters] = useState<LibraryFilters>(() => loadLibraryFilters());
   const [librarySelection, setLibrarySelection] = useState<{ id: string }>();
   useEffect(() => window.launcher.onOpenFriends(() => {setSocialMounted(true);setSocialOpen(true);}), []);
+  useEffect(()=>window.launcher.onLauncherPage(next=>{if(['home','library','store','settings'].includes(next))go(next);}),[]);
 
   useEffect(() => {
     void window.launcher.getSnapshot().then((value) => { setData(value); setLoading(false); }).catch((error) => { setToast({ kind: 'error', message: errorMessage(error) }); setLoading(false); });

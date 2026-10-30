@@ -1,8 +1,10 @@
+import {desktopTrayAvailable} from './launcher-tray-desktop.js';
+import {LauncherTray} from './launcher-tray.js';
 import {SteamKeyboard} from './steam-keyboard.js';
 import type {XboxProfileRequest} from '../shared/types.js';
 import {XboxSocial as NativeXboxSocial} from './xbox-native-social.js';
 import {resetSocialTransport} from './xbox-social-transport.js';
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, Notification, powerSaveBlocker, screen, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, net, Notification, powerSaveBlocker, screen, shell, Tray, Menu } from 'electron';
 import { constants, createWriteStream, promises as fs, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -193,6 +195,22 @@ const OWNED_ACCESS_WAIT_MS = 2_500;
 const installPlans = new InstallPlans(readInstallPlan);
 const demoMode = process.env.XODUS_DEMO === '1';
 const steamKeyboard=new SteamKeyboard();
+const launcherTray=new LauncherTray(()=>{
+  const image=nativeImage.createFromPath(fileURLToPath(new URL('../../assets/icon.png',import.meta.url)));
+  if(image.isEmpty())throw Error('Tray icon unavailable.');
+  const tray=new Tray(image);
+  const open=async(page?:'home'|'library'|'store'|'settings')=>{await showLauncher();if(page)mainWindow?.webContents.send('launcher-page',page);};
+  const navigate=(page:'home'|'library'|'store'|'settings')=>()=>{void open(page).catch(()=>console.error('Could not restore Nexus.'));};
+  try{
+    tray.setToolTip('Xodus Nexus');tray.on('click',navigate('home'));
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {label:nativeText('Home'),click:navigate('home')},{label:nativeText('My Library'),click:navigate('library')},
+      {label:nativeText('Store'),click:navigate('store')},{label:nativeText('Settings'),click:navigate('settings')},
+      {type:'separator'},{label:nativeText('Quit'),click:()=>app.quit()},
+    ]));return tray;
+  }catch(error){tray.destroy();throw error;}
+},()=>desktopTrayAvailable());
+
 const walletUnlocker = new WalletUnlocker();
 const xboxSocial = new XboxSocialSessions(() => {
   const status = backend?.current;
@@ -1934,9 +1952,18 @@ function registerIpc(): void {
     if (typeof patch.externalXodusRoot === 'string') allowed.externalXodusRoot = patch.externalXodusRoot.trim() ? path.resolve(patch.externalXodusRoot) : '';
     if (typeof patch.runtimeRoot === 'string') allowed.runtimeRoot = path.resolve(patch.runtimeRoot);
     if (typeof patch.verboseLogs === 'boolean') allowed.verboseLogs = patch.verboseLogs;
+    if (patch.closeToTray !== undefined) {if(typeof patch.closeToTray !== 'boolean')throw Error('Invalid close-to-tray setting.');allowed.closeToTray=patch.closeToTray;}
     if (typeof patch.firstRunCompleted === 'boolean') allowed.firstRunCompleted = patch.firstRunCompleted;
     const previous = store.settings;
     const settings = await store.setSettings(allowed);
+    if(patch.closeToTray!==undefined){
+      if(!launcherTray.configure(settings.closeToTray===true)){
+        await store.setSettings({closeToTray:previous.closeToTray===true});emitSnapshot();
+        throw Error('The system tray is unavailable. Use a desktop session with a system tray.');
+      }
+      if(!settings.closeToTray&&mainWindow&&!mainWindow.isVisible())await showLauncher();
+      if(Object.keys(patch).every(key=>key==='closeToTray')){emitSnapshot();return settings;}
+    }
     if(Object.keys(xboxOverlayPatch(patch)).length){
       await overlayShortcut?.configure(settings);gameGuide?.publish('overlay',xboxOverlaySettings(settings));
       if(!xboxOverlaySettings(settings).overlayEnabled)gameGuide?.reset();
@@ -2096,6 +2123,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on('blur',restoreOverlayShortcut);
   mainWindow.on('closed',restoreOverlayShortcut);
   mainWindow.webContents.on('render-process-gone',restoreOverlayShortcut);
+  mainWindow.on('close',event=>{if(mainWindow)launcherTray.close(event,()=>mainWindow?.hide());});
   mainWindow.on('closed', () => { mainWindow = null; finishShortcutSession(); });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void openDesktopTarget(url, () => shell.openExternal(url))
@@ -2187,6 +2215,7 @@ app.whenReady().then(async () => {
   shortcutOnly = Boolean(startupRequest.gameId) && !demoMode;
   store = new StateStore(app.getPath('userData'));
   await store.load();
+  launcherTray.configure(store.settings.closeToTray === true);
   xboxParty=new XboxParty(nativeSocialConnection);
   xboxInvites=new XboxInvites(nativeSocialConnection);
   voiceHost=new XboxVoiceHost(__dirname,{
@@ -2360,6 +2389,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {gameDisplay.stop();});
 
 app.on('before-quit', (event) => {
+  launcherTray.quit();
   connectivity?.stop();
   xboxSocial.close();
   walletUnlocker.cancel();

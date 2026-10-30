@@ -184,6 +184,7 @@ export interface GameOperation {
 }
 
 export interface Settings {
+  closeToTray?: boolean;
   interfaceLanguage?: string;
   installRoot: string;
   market: string;
@@ -236,6 +237,7 @@ export interface KeyringStatus {
 }
 
 export interface LauncherApi {
+  onLauncherPage(callback:(page: "home"|"library"|"store"|"settings")=>void):()=>void;
   showTouchKeyboard(): Promise<boolean>;setXboxOverlayRecording(recording:boolean):Promise<void>;}
 /** The Xbox app's "Offline permissions" setting for this device, as Microsoft reports it. */
 export interface OfflinePermissions {

@@ -36,12 +36,14 @@ const h = vi.hoisted(() => ({
   launchArguments: [] as string[][],
   backendRefreshes: 0, runtimeRefreshes: 0,
   accountRequests: 0,
+  trayCreated: vi.fn(), trayDestroyed: vi.fn(),
   prefixLocales: [] as (string | undefined)[],
   planOverrides: new Map<string, any>(),
   libraryRows: [] as any[],
   accountReads: [] as ((result: { code: number; output: string }) => void)[],
   posters: vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, `https://store-images.s-microsoft.com/${id}`]))),
 }));
+vi.mock('./launcher-tray-desktop.js',()=>({desktopTrayAvailable:()=>true}));
 vi.mock('electron', () => ({
   Notification: class { static isSupported() { return true; } constructor(private options: { title: string; body: string }) {} on() {} show() { h.notifications.push(this.options); } },
   app: { requestSingleInstanceLock: () => true, getPath: (name: string) => path.join(h.root, name),
@@ -49,10 +51,10 @@ vi.mock('electron', () => ({
     whenReady: () => Promise.resolve(), getVersion: () => '0.0.0', isPackaged: false, emit:vi.fn(), quit: h.quit },
   ipcMain: { handle: (name: string, callback: (...args: any[]) => any) => h.handlers.set(name, callback),removeHandler:(name:string)=>h.handlers.delete(name) },
   BrowserWindow: class { webContents = { on: vi.fn(), send: vi.fn(), setWindowOpenHandler: vi.fn() };
-    on() {} once() {} show() {} focus() {} maximize = h.maximize; isDestroyed() { return false; } async loadFile() {} },
+    on() {} once() {} show() {} hide() {} isVisible() {return true;} focus() {} maximize = h.maximize; isDestroyed() { return false; } async loadFile() {} },
   screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }) },
   globalShortcut:{register:vi.fn(()=>false),unregister:vi.fn()},
-  dialog: { showMessageBox: h.showMessage, showSaveDialog: h.showSave }, nativeImage: {}, shell: { trashItem: h.trash }, powerSaveBlocker: { start: h.blockDisplay, stop: h.releaseDisplay },
+  dialog: { showMessageBox: h.showMessage, showSaveDialog: h.showSave }, nativeImage: {createFromPath:()=>({isEmpty:()=>false})}, Menu:{buildFromTemplate:(items:unknown)=>items}, Tray:class {constructor(){h.trayCreated();}setToolTip(){}on(){}setContextMenu(){}destroy(){h.trayDestroyed();}}, shell: { trashItem: h.trash }, powerSaveBlocker: { start: h.blockDisplay, stop: h.releaseDisplay },
 }));
 vi.mock('./backend.js', () => ({ LINUX_RUN_PATCH: 'test-patch', BackendManager: class {
   get current() { return h.backend; } async refresh() {h.backendRefreshes++;} async checkUpdate() {} async externalDownloadRunning() { return false; }
@@ -637,6 +639,16 @@ it('keeps interrupted updates blocked after cancellation and queue removal, then
   expect(await fs.readFile(path.join(directory, 'Recovery.exe'), 'utf8')).toBe('MZ new fixture');
   await ipc('remove-game', game.id, 'library');
   h.downloads.splice(0); h.notifications.splice(notifications);
+});
+
+it('changes only the tray preference without restarting account/backend work',async()=>{
+ const accounts=h.accountRequests,backend=h.backendRefreshes;
+ await h.handlers.get('update-settings')!({}, {closeToTray:true});
+ expect(snapshot().settings.closeToTray).toBe(true);expect(h.trayCreated).toHaveBeenCalledOnce();
+ await h.handlers.get('update-settings')!({}, {closeToTray:false});
+ expect(snapshot().settings.closeToTray).toBe(false);expect(h.trayDestroyed).toHaveBeenCalledOnce();
+ expect(h.accountRequests).toBe(accounts);expect(h.backendRefreshes).toBe(backend);
+ await expect(h.handlers.get('update-settings')!({}, {closeToTray:'true'})).rejects.toThrow('close-to-tray');
 });
 
 it('runs real queue IPC, pause/cancel/failure/restart and simultaneous play/download safely', async () => {

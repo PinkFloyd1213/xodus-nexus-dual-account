@@ -328,3 +328,12 @@ it.each(['IsDevOnly="false"', 'isdevonly="false"', ''])('selects a retail execut
   await writeFile(path.join(directory,'Game.exe'),'MZ retail');
   expect((await inspectGameDirectory(directory)).executable).toBe('Game.exe');
 });
+
+it('defaults close-to-tray off, persists an explicit choice and rejects invalid preferences',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'nexus-tray-state-'));created.push(root);
+ const store=new StateStore(root);await store.load();expect(store.settings.closeToTray).toBe(false);
+ await store.setSettings({closeToTray:true});const reopened=new StateStore(root);await reopened.load();expect(reopened.settings.closeToTray).toBe(true);
+ await expect(store.setSettings({closeToTray:'yes'} as any)).rejects.toThrow('close-to-tray');
+ await writeFile(path.join(root,'launcher-state.json'),JSON.stringify({settings:{closeToTray:'true'}}));
+ const legacy=new StateStore(root);await legacy.load();expect(legacy.settings.closeToTray).toBe(false);
+});

@@ -1493,7 +1493,10 @@ function registerIpc(): void {
     desktopProfileRequest={id:randomUUID(),xuid:value};await showLauncher();
     mainWindow?.webContents.send('xbox-desktop-profile',desktopProfileRequest);
   });
-  ipcMain.handle('xbox-desktop-profile',event=>{socialSender(event);return event.sender===mainWindow?.webContents?desktopProfileRequest:undefined;});
+  ipcMain.handle('xbox-desktop-profile',event=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)throw Error('Read desktop profiles through Nexus.');
+    return desktopProfileRequest;
+  });
 
  ipcMain.handle('xbox-game-invite-availability',event=>{socialSender(event);return nativeInviteAvailability();});
  ipcMain.handle('xbox-game-invite-send',(event,xuid:string)=>{socialSender(event);const bridge=availableNativeInvite();if(!bridge)throw Error('Start an online game session to invite someone.');bridge.invite(xuid);});

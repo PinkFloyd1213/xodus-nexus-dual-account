@@ -926,8 +926,8 @@ export function SettingsPage({ data, toast }: { data: AppSnapshot; toast: (value
       <div className="save-row"><span>{ui('settings.language_help')}</span><button className="primary" disabled={Boolean(busy)} onClick={() => invoke('save-language', () => window.launcher.updateSettings({ interfaceLanguage: form.interfaceLanguage ?? 'system' }), ui('settings.language_saved'))}>{ui('settings.save_language')}</button></div>
     </section>
 
-    <section className="settings-card compact">
-      <label className="tool-checkbox"><input type="checkbox" checked={form.closeToTray===true} disabled={Boolean(busy)} onChange={event=>{const closeToTray=event.target.checked;setForm({...form,closeToTray});void invoke('close-to-tray',()=>window.launcher.updateSettings({closeToTray}),ui('settings.tray_saved'));}}/><span>{ui('settings.close_to_tray')}</span></label>
+    <section className="settings-card compact tray-settings">
+      <label className="tray-toggle"><input type="checkbox" checked={form.closeToTray===true} disabled={Boolean(busy)} onChange={event=>{const closeToTray=event.target.checked;setForm({...form,closeToTray});void invoke('close-to-tray',()=>window.launcher.updateSettings({closeToTray}),ui('settings.tray_saved'));}}/><span>{ui('settings.close_to_tray')}</span></label>
       <small>{ui('settings.close_to_tray_help')}</small>
     </section>
 

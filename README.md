@@ -63,6 +63,19 @@ Flatpak version available through Discover. Other browsers are not supported.
 
 [Setup guide and SteamOS requirements](https://github.com/domsvoboda/xodus-nexus/wiki/Getting-started)
 
+## Uninstall
+
+Close Nexus and its games, then remove the application-menu installation without sudo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/domsvoboda/xodus-nexus/main/scripts/uninstall.sh | bash
+```
+
+Games, saves, settings, downloaded runtimes, wallet credentials and system packages are kept.
+For a custom installation, use the same `XODUS_NEXUS_PREFIX` and `XDG_DATA_HOME` as during installation.
+To preview the files, download the script and run `bash uninstall.sh --dry-run`.
+If you only downloaded an AppImage manually, delete that AppImage instead.
+
 ## Use
 
 - **My Library** combines owned, Game Pass and installed games, with Access, Play state and title filters.

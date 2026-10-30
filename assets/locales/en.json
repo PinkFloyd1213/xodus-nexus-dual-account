@@ -1,4 +1,5 @@
 {
+  "library.stop_update_check": "Stop checking updates",
 "notifications.title": "Notifications",
 "notifications.unread_one": "Notifications, {{count}} unread",
 "notifications.unread_zero": "Notifications, {{count}} unread",

@@ -343,34 +343,55 @@ async function checkLauncherUpdate(): Promise<void> {
   await launcherUpdater.check();
 }
 
+async function stopGameUpdateCheck(): Promise<void> {
+  gameUpdateController?.abort();
+  await gameUpdateJob?.catch(() => {});
+}
+
 async function checkGameUpdates(id?: string): Promise<void> {
   ensureIdle();
   if (authState.stored !== true) throw new Error('Sign in before checking game updates.');
   const binary = requireBackend('account');
   const games = id ? store.games.filter(game => game.id === id) : [...store.games];
   if (id && !games.length) throw new Error('Game not found.');
-  let session: XodusServiceSession | undefined;
-  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-updates-'));
+  const previous = new Map(games.map(game => [game.id, gameUpdates[game.id]]));
+  const controller = new AbortController();
   checkingGameUpdates = true;
-  gameUpdateController = new AbortController();
+  gameUpdateController = controller;
+  let session: XodusServiceSession | undefined;
+  let temporary: string | undefined;
   try {
-    for (const game of games) gameUpdates[game.id] = { checking: true };
+    for (const game of games) gameUpdates[game.id] = { ...gameUpdates[game.id], checking: true };
     emitSnapshot();
-    session = await startXodusService(binary, temporary, () => {}, gameUpdateController.signal);
+    temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-updates-'));
+    if (controller.signal.aborted) return;
+    session = await startXodusService(binary, temporary, () => {}, controller.signal);
     for (const game of games) {
-      if (gameUpdateController.signal.aborted) throw new Error('Update check cancelled.');
+      if (controller.signal.aborted) break;
       try {
         const inspected = await inspectGameDirectory(game.path);
+        if (controller.signal.aborted) break;
         if (!inspected.storeId || !inspected.installedVersion) throw new Error('This manifest has no Store ID or installed package version.');
-        gameUpdates[game.id] = await queryGameUpdate(session.socketPath, inspected.storeId, inspected.installedVersion, gameUpdateController.signal);
-      } catch (error) { gameUpdates[game.id] = { checking: false, checkedAt: new Date().toISOString(), error: (error as Error).message }; }
+        gameUpdates[game.id] = await queryGameUpdate(session.socketPath, inspected.storeId, inspected.installedVersion, controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted) break;
+        gameUpdates[game.id] = { checking: false, checkedAt: new Date().toISOString(), error: (error as Error).message };
+      }
       emitSnapshot();
     }
   } catch (error) {
-    for (const game of games) if (gameUpdates[game.id]?.checking) gameUpdates[game.id] = { checking: false, error: (error as Error).message };
-    throw error;
+    if (!controller.signal.aborted) {
+      for (const game of games) if (gameUpdates[game.id]?.checking) gameUpdates[game.id] = { checking: false, error: (error as Error).message };
+      throw error;
+    }
   } finally {
-    await session?.stop().catch(() => {}); await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    // Preserve completed results and restore previous availability for cancelled requests.
+    for (const game of games) if (gameUpdates[game.id]?.checking) {
+      const value = previous.get(game.id);
+      if (value) gameUpdates[game.id] = value; else delete gameUpdates[game.id];
+    }
+    await session?.stop().catch(() => {});
+    if (temporary) await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
     checkingGameUpdates = false; gameUpdateController = undefined; emitSnapshot();
   }
 }
@@ -640,7 +661,9 @@ function requestAuth(command: 'login' | 'logout'): Promise<void> {
 }
 
 async function startInstall(request: InstallRequest, updateGame?: Game, resumed?: DownloadTask): Promise<string> {
-  ensureIdle(updateGame ? undefined : 'install');
+  await stopGameUpdateCheck();
+  ensureIdle('install');
+  if (updateGame && gameOperation?.gameId === updateGame.id && ['preparing', 'running', 'stopping'].includes(gameOperation.status)) throw Error('Close this game before updating its installed files.');
   preparingInstall = true;
   try { await prepareSystemWallet(); return await prepareInstall(request, updateGame, undefined, resumed); }
   finally { preparingInstall = false; }
@@ -717,7 +740,6 @@ async function prepareInstall(request: InstallRequest, updateGame?: Game, conten
   if (updateGame) {
     const actual = await fs.realpath(destination);
     if (actual !== await fs.realpath(updateGame.path)) throw new Error('Update destination differs from the installed game.');
-    if (await backend.externalDownloadRunning()) throw new Error('Another Xodus download is running. Wait before updating this game.');
     const processes = await run('ps', ['-eo', 'args='], { maxOutput: 2_000_000 });
     if (processes.code !== 0) throw new Error('Could not verify that the game is closed. Update was not started.');
     const executable = updateGame.executable ? path.basename(updateGame.executable).toLowerCase() : '';
@@ -1010,6 +1032,7 @@ async function gameTitleId(game: Game): Promise<string | undefined> {
 }
 
 async function launchGame(id: string): Promise<void> {
+  await stopGameUpdateCheck();
   ensureIdle('launch');
   preparingLaunch = true;
   try { await prepareGameLaunch(id); }
@@ -1450,6 +1473,7 @@ function registerDemoIpc(catalogMarket: () => string): void {
   ipcMain.handle('catalog-search', (_event, query: string, cursor?: string) => catalog.search(query, catalogMarket(), cursor));
   ipcMain.handle('catalog-featured', () => catalog.featured(catalogMarket()));
   ipcMain.handle('account-library', (_event, kind: 'all' | 'owned' | 'gamepass') => demoAccountLibrary(kind, demoArtwork));
+  ipcMain.handle('stop-game-update-check', () => {});
   ipcMain.handle('start-install', () => 'demo-download');
   ipcMain.handle('install-plan', () => { throw Error('Package selection is unavailable in demo mode.'); });
   ipcMain.handle('game-content', (_event, id: string) => ({ gameId: id, checkedAt: new Date().toISOString(), items: [] }));
@@ -1633,6 +1657,7 @@ function registerIpc(): void {
     }
     app.relaunch({ execPath: launcherUpdater.targetPath, args: [] }); app.quit();
   });
+  ipcMain.handle('stop-game-update-check', () => stopGameUpdateCheck());
   ipcMain.handle('check-game-updates', (_event, id?: string) => {
     if (gameUpdateJob) return gameUpdateJob;
     gameUpdateJob = checkGameUpdates(id).finally(() => { gameUpdateJob = undefined; });
@@ -1783,6 +1808,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('remove-game', async (_event, id: string, mode: 'library' | 'delete-files') => {
     if (mode !== 'library' && mode !== 'delete-files') throw new Error('Invalid removal option.');
+    await stopGameUpdateCheck();
     ensureIdle('remove');
     const game = store.games.find((entry) => entry.id === id);
     if (!game) throw new Error('Game not found.');

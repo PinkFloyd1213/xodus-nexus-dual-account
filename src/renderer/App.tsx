@@ -763,7 +763,7 @@ export function LibraryPage({ data, toast, filters, onFiltersChange, selection }
     },
     onUpdate: () => { setMenu(undefined); if (game.updateIncomplete || data.gameUpdates?.[game.id]?.available) void updateInstalledGame(game); else void checkUpdates(game.id); },
     updateLabel: game.updateIncomplete ? ui('downloads.resume_update') : data.gameUpdates?.[game.id]?.checking ? ui("ui.checking_ec963ff") : data.gameUpdates?.[game.id]?.available ? ui("ui.update_game_60a47ea") : ui("ui.check_for_updates_f26f327"),
-    updateDisabled: Boolean(data.gameUpdates?.[game.id]?.checking || !game.storeId || game.installState !== 'ready' && !game.updateIncomplete || !data.backend.capabilities.streaming || data.downloads.some(task => ['running', 'queued', 'paused'].includes(task.status) && (task.gameId === game.id || task.status === 'running'))),
+    updateDisabled: Boolean(data.gameUpdates?.[game.id]?.checking || !game.storeId || game.installState !== 'ready' && !game.updateIncomplete || !data.backend.capabilities.streaming || data.downloads.some(task => ['running', 'queued', 'paused'].includes(task.status) && (task.gameId === game.id))),
     onContent: () => { setMenu(undefined); setContentGameId(game.id); },
     contentDisabled: !game.storeId || data.auth.stored !== true || !data.backend.capabilities.library,
   });
@@ -777,7 +777,7 @@ export function LibraryPage({ data, toast, filters, onFiltersChange, selection }
     </>} /> : null;
   return <main ref={pageRef} className={`page library-page${detailVisible ? ' library-detail-open' : ''}`}>
     <div hidden={detailVisible}>
-    <header className="page-header" data-gamepad-library-header><div><h1>{ui("ui.my_library_d931dba")}</h1><p>{ui("ui.your_owned_games_game_pass_games_and_local_insta_ebb2bf4")}</p></div><div className="button-row"><button className="secondary" disabled={data.auth.stored !== true || gameBusy || Object.values(data.gameUpdates ?? {}).some(update => update.checking)} onClick={() => checkUpdates()}><RefreshCw />{ui("ui.check_game_updates_11270a1")}</button><button className="secondary" onClick={importGame}><Plus />{ui("ui.import_game_692bcb8")}</button></div></header>
+    <header className="page-header" data-gamepad-library-header><div><h1>{ui("ui.my_library_d931dba")}</h1><p>{ui("ui.your_owned_games_game_pass_games_and_local_insta_ebb2bf4")}</p></div><div className="button-row"><button className="secondary" disabled={data.auth.stored !== true || gameBusy || Object.values(data.gameUpdates ?? {}).some(update => update.checking)} onClick={() => checkUpdates()}><RefreshCw />{ui("ui.check_game_updates_11270a1")}</button>{Object.values(data.gameUpdates ?? {}).some(update => update.checking) ? <button className="secondary" onClick={() => void window.launcher.stopGameUpdateCheck().catch(error => toast({ kind: 'error', message: errorMessage(error) }))}><X />{ui('library.stop_update_check')}</button> : null}<button className="secondary" onClick={importGame}><Plus />{ui("ui.import_game_692bcb8")}</button></div></header>
     <div className="library-layout">
       <AccountGamesForUser data={data} toast={toast} filters={filters} onFiltersChange={onFiltersChange} selectedId={selected?.id} select={selectGame} menu={openMenu} openProduct={selectProductDetails} />
     </div>

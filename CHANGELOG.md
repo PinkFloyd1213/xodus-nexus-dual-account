@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop background update checks, keep game actions responsive, and queue updates while another game downloads.
+
 - Optionally keep Nexus and downloads running in the desktop system tray, with shortcuts to Home, Library, Store and Settings.
 - Keep Steam game shortcuts open while the account initializes.
 - Skip development-only executables when selecting a game’s launch target. Thanks @MaxxJag.

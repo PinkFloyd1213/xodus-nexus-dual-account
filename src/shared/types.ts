@@ -570,6 +570,7 @@ export interface LauncherApi {
   restartLauncher(): Promise<void>;
   rollbackLauncherUpdate(): Promise<void>;
   checkGameUpdates(id?: string): Promise<void>;
+  stopGameUpdateCheck(): Promise<void>;
   readDiagnosticLog(operationId: string): Promise<DiagnosticLog>;
   copyDiagnosticLog(operationId: string): Promise<void>;
   revealDiagnosticLog(operationId: string): Promise<void>;

@@ -101,6 +101,7 @@ const api: LauncherApi = {
   installLauncherUpdate: () => ipcRenderer.invoke('install-launcher-update'),
   restartLauncher: () => ipcRenderer.invoke('restart-launcher'),
   rollbackLauncherUpdate: () => ipcRenderer.invoke('rollback-launcher-update'),
+  stopGameUpdateCheck: () => ipcRenderer.invoke('stop-game-update-check'),
   checkGameUpdates: (id?: string) => ipcRenderer.invoke('check-game-updates', id),
   readDiagnosticLog: (id: string) => ipcRenderer.invoke('read-diagnostic-log', id),
   copyDiagnosticLog: (id: string) => ipcRenderer.invoke('copy-diagnostic-log', id),

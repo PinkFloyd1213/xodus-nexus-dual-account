@@ -13,6 +13,9 @@ import { DownloadCleanup } from './download-cleanup.js';
 const h = vi.hoisted(() => ({
   root: '', wine: '', backend: {} as any, runtime: {} as any,
   savedPausedId: '',
+  updateSignals: [] as AbortSignal[],
+  updateReplies: [] as any[],
+  updateStops: vi.fn(async () => {}),
   handlers: new Map<string, (...args: any[]) => any>(),
   events: new Map<string, (...args: any[]) => any>(),
   downloads: [] as { args: string[]; progress: (paused?: boolean, phase?: string) => void; finish: (code: number) => void }[],
@@ -94,7 +97,15 @@ vi.mock('./install-plan.js', async original => ({ ...await original<typeof impor
 vi.mock('./xodus-service.js', () => ({ cloudSaveRuntime: async () => false, unbridgedCloudSaveRuntime: async () => false,
   gameInviteRuntime: async () => false,
   offlineIdentityRuntime: async () => h.offlineRuntimeSupported,
-  selectedWinePath: () => h.wine, storeContentRuntime: async () => h.contentSupported, storeDiscoveryRuntime: async () => h.discoverySupported, startXodusService: vi.fn() }));
+  selectedWinePath: () => h.wine, storeContentRuntime: async () => h.contentSupported, storeDiscoveryRuntime: async () => h.discoverySupported, startXodusService: async () => ({ socketPath: '/synthetic-updates', stop: h.updateStops }) }));
+vi.mock('./game-updates.js', () => ({ queryGameUpdate: async (_socket: string, _id: string, _version: string, signal: AbortSignal) => {
+  h.updateSignals.push(signal);
+  if (h.updateReplies.length) return h.updateReplies.shift();
+  return new Promise((_resolve, reject) => {
+    const abort = () => reject(Error('Update check cancelled.'));
+    if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+  });
+} }));
 // No public connectivity probes from an account-free launch integration fixture.
 vi.mock('./connectivity.js',()=>({ConnectivityMonitor:class {
   get current(){return {state:h.connectivityState};} start(){} stop(){}
@@ -651,6 +662,54 @@ it('changes only the tray preference without restarting account/backend work',as
  await expect(h.handlers.get('update-settings')!({}, {closeToTray:'true'})).rejects.toThrow('close-to-tray');
 });
 
+it('cancels background update checks before play, install and removal, and supports an explicit stop (#480)', async () => {
+  const begin = async () => {
+    const count = h.updateSignals.length;
+    const job = ipc('check-game-updates');
+    await vi.waitFor(() => expect(h.updateSignals.length).toBe(count + 1));
+    return { job, signal: h.updateSignals.at(-1)! };
+  };
+  const prior = {checking: false, available: true, latestVersion: '2.0.0.0', checkedAt: new Date().toISOString()};
+  h.updateReplies.push(prior); await ipc('check-game-updates', 'sample');
+  let check = await begin();
+  await ipc('stop-game-update-check'); await check.job;
+  expect(check.signal.aborted).toBe(true);
+  expect(snapshot().gameUpdates.sample).toEqual(prior);
+  expect(Object.values(snapshot().gameUpdates).some((entry: any) => entry.checking)).toBe(false);
+  check = await begin();
+  await ipc('launch-game', 'sample'); await check.job;
+  expect(check.signal.aborted).toBe(true); expect(snapshot().gameOperation.status).toBe('running');
+  h.game!.finish(); await vi.waitFor(() => expect(snapshot().gameOperation.status).toBe('complete'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  check = await begin();
+  const id = await install('V'); await check.job;
+  expect(check.signal.aborted).toBe(true);
+  await vi.waitFor(() => expect(h.downloads.length).toBeGreaterThan(0));
+  await ipc('cancel-download', id, 'keep'); await h.installQueue!.settled(id);
+  await ipc('remove-download', id); h.downloads.splice(0);
+  const directory = path.join(h.root, 'remove-during-update-check');
+  await fs.mkdir(directory); await fs.writeFile(path.join(directory, 'Game.exe'), 'MZ fixture');
+  await fs.copyFile(path.join(h.root, 'installed-game', 'MicrosoftGame.config'), path.join(directory, 'MicrosoftGame.config'));
+  const game = await ipc('import-game', directory);
+  check = await begin(); await ipc('remove-game', game.id, 'library'); await check.job;
+  expect(check.signal.aborted).toBe(true); expect(snapshot().games.some((row: any) => row.id === game.id)).toBe(false);
+  expect(h.updateStops).toHaveBeenCalledTimes(5);
+  h.blockDisplay.mockClear(); h.releaseDisplay.mockClear();
+});
+
+it('queues an installed-game update behind another download and keeps duplicate destinations protected (#480)', async () => {
+  const first = await install('U');
+  await vi.waitFor(() => expect(h.downloads).toHaveLength(1));
+  const update = await ipc('update-installed-game', 'sample');
+  expect(snapshot().downloads.find((row: any) => row.id === update)).toMatchObject({kind: 'update', status: 'queued'});
+  expect(h.downloads).toHaveLength(1);
+  await expect(ipc('update-installed-game', 'sample')).rejects.toThrow('already in');
+  await expect(ipc('launch-game', 'sample')).rejects.toThrow('Finish or cancel');
+  await ipc('cancel-download', update, 'keep'); await h.installQueue!.settled(update);
+  await ipc('cancel-download', first, 'keep'); await h.installQueue!.settled(first);
+  await ipc('remove-download', update); await ipc('remove-download', first); h.downloads.splice(0);
+});
+
 it('runs real queue IPC, pause/cancel/failure/restart and simultaneous play/download safely', async () => {
   const first = await install('A'); await vi.waitFor(() => expect(h.downloads).toHaveLength(1));
   expect(h.blockDisplay).not.toHaveBeenCalled();
@@ -663,7 +722,7 @@ it('runs real queue IPC, pause/cancel/failure/restart and simultaneous play/down
   expect(h.downloads).toHaveLength(1); expect(snapshot().downloads.find((task: any) => task.id === next).status).toBe('queued');
   await expect(install('C')).rejects.toThrow('already in');
   await expect(install('D', path.join(h.root, 'installed-game', 'nested'))).rejects.toThrow('overlaps');
-  await expect(ipc('update-installed-game', 'sample')).rejects.toThrow('Another Xodus');
+  await expect(ipc('update-installed-game', 'sample')).rejects.toThrow('Close this game');
   await expect(ipc('update-settings', { market: 'GB' })).rejects.toThrow('Another Xodus');
   await ipc('cancel-download', cancel); h.downloads[0].finish(1);
   await vi.waitFor(() => expect(h.downloads).toHaveLength(2));

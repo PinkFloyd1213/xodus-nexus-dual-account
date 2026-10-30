@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Optionally keep Nexus and downloads running in the desktop system tray, with shortcuts to Home, Library, Store and Settings.
+- Keep Steam game shortcuts open while the account initializes.
+- Skip development-only executables when selecting a game’s launch target. Thanks @MaxxJag.
+
 - Add a per-game DualShock 4 compatibility option for SDL input.
 - Show missing system library and glibc requirements when runtime installation fails.
 

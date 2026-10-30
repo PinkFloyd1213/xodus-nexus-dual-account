@@ -192,6 +192,7 @@ const accountLibrary = new AccountLibrary((ids, market) => catalog.licensedProdu
 const OWNED_ACCESS_WAIT_MS = 2_500;
 const installPlans = new InstallPlans(readInstallPlan);
 const demoMode = process.env.XODUS_DEMO === '1';
+const steamKeyboard=new SteamKeyboard();
 const walletUnlocker = new WalletUnlocker();
 const xboxSocial = new XboxSocialSessions(() => {
   const status = backend?.current;
@@ -1488,7 +1489,6 @@ async function acceptPartyInvite(event:Electron.IpcMainInvokeEvent,offer:string,
  if(!voiceHost.owns(event)||!context||!current||context.account!==current.account||context.binary!==current.binary)throw Error('Xbox party account changed. Select the invitation again.');
  return xboxParty.accept(offer,handle);
 }
-const steamKeyboard=new SteamKeyboard();
 function registerIpc(): void {
   ipcMain.handle('show-touch-keyboard',event=>steamKeyboard.show(event,mainWindow));
   ipcMain.handle('xbox-overlay-recording',async(event,recording:unknown)=>{

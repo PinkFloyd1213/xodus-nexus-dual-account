@@ -108,7 +108,7 @@ vi.mock('./process.js', () => ({
       result: Promise.resolve({code:0,output:JSON.stringify({schema:1,account:'sample@example.test',market:'US',checkedAt:new Date().toISOString(),entitlements:h.libraryRows})}),
     }; }
     if (args[0] === 'account') { h.accountRequests++;return {
-      child: { kill: vi.fn(() => true) },
+      child: { kill: vi.fn(() => true), stdin: { end: vi.fn() } },
       result: h.holdAccountReads
         ? new Promise<{ code: number; output: string }>(resolve => { h.accountReads.push(resolve); })
         : Promise.resolve({ code: 0, output: JSON.stringify({ stored: true, username: 'sample@example.test' }) }),

@@ -177,3 +177,61 @@ it('rejects a forged Content ID, family, preorder-only SKU or storage inside the
   const data=catalog();Object.assign(data.Products[1].DisplaySkuAvailabilities[0].Sku.Properties,{IsPreOrder:true});
   expect(contentOffers(contentManifest(baseXml),data,{[OWN]:'owned'}).packages).toEqual([]);
 });
+
+async function sourceConfigFixture() {
+  const f = await installFixture();
+  await fs.mkdir(path.join(f.directory, 'SRC'));
+  await fs.rename(path.join(f.directory, 'MicrosoftGame.Config'), path.join(f.directory, 'SRC', 'MicrosoftGame.config'));
+  await fs.writeFile(path.join(f.directory, `layout_${GUID}.xml`), '<Package><Chunk><FileGroup SourcePath="SRC" DestinationPath="\\" Include="MicrosoftGame.config"/><FileGroup SourcePath="." Include="*.png"/></Chunk></Package>');
+  return f;
+}
+it('installs layout-declared SRC metadata and preserves a root manifest for runtime discovery (#383)', async () => {
+  const f = await sourceConfigFixture();
+  await f.manager.complete(f.game, f.selected);
+  expect(await fs.readFile(path.join(f.directory, 'MicrosoftGame.config'), 'utf8')).toBe(childXml());
+  expect(await fs.readFile(path.join(f.directory, 'SRC', 'MicrosoftGame.config'), 'utf8')).toBe(childXml());
+  expect(await f.manager.roots(f.game)).toEqual([f.directory]);
+  await fs.writeFile(path.join(f.directory, 'SRC', 'MicrosoftGame.config'), childXml(PAID));
+  expect(await f.manager.roots(f.game)).toEqual([]);
+});
+it('requires SRC metadata to match identity and a layout mapping to the package root (#383)', async () => {
+  for (const failure of ['identity', 'mapping', 'destination', 'payload']) {
+    const f = await sourceConfigFixture();
+    if (failure === 'identity') await fs.writeFile(path.join(f.directory, 'SRC', 'MicrosoftGame.config'), childXml(PAID));
+    if (failure === 'mapping') await fs.writeFile(path.join(f.directory, `layout_${GUID}.xml`), '<Package><Chunk><FileGroup SourcePath="." Include="*.png"/></Chunk></Package>');
+    if (failure === 'destination') await fs.writeFile(path.join(f.directory, `layout_${GUID}.xml`), '<Package><Chunk><FileGroup SourcePath="SRC" DestinationPath="Other" Include="MicrosoftGame.config"/></Chunk></Package>');
+    if (failure === 'payload') await fs.unlink(path.join(f.directory, 'logo.PNG'));
+    await expect(f.manager.complete(f.game, f.selected)).rejects.toThrow();
+    await expect(fs.access(path.join(f.directory, 'MicrosoftGame.config'))).rejects.toThrow();
+    expect(await f.manager.roots(f.game)).toEqual([]);
+  }
+});
+it('rejects redirected, ambiguous or conflicting SRC configuration (#383)', async () => {
+  for (const failure of ['directory-link', 'file-link', 'duplicate-directory', 'duplicate-config', 'conflict']) {
+    const f = await sourceConfigFixture();
+    if (failure === 'directory-link') {
+      await fs.rename(path.join(f.directory, 'SRC'), path.join(f.root, 'outside'));
+      await fs.symlink(path.join(f.root, 'outside'), path.join(f.directory, 'SRC'));
+    }
+    if (failure === 'file-link') {
+      await fs.unlink(path.join(f.directory, 'SRC', 'MicrosoftGame.config'));
+      await fs.symlink(path.join(f.base, 'MicrosoftGame.Config'), path.join(f.directory, 'SRC', 'MicrosoftGame.config'));
+    }
+    if (failure === 'duplicate-directory') await fs.mkdir(path.join(f.directory, 'src'));
+    if (failure === 'duplicate-config') await fs.writeFile(path.join(f.directory, 'SRC', 'MicrosoftGame.CONFIG'), childXml());
+    if (failure === 'conflict') await fs.writeFile(path.join(f.directory, 'MicrosoftGame.config'), childXml(PAID));
+    await expect(f.manager.complete(f.game, f.selected)).rejects.toThrow();
+    expect(await f.manager.roots(f.game)).toEqual([]);
+  }
+});
+
+it('handles case-insensitive SRC metadata with a wildcard root layout and safe retries (#383)', async () => {
+  const f = await sourceConfigFixture();
+  await fs.rename(path.join(f.directory, 'SRC'), path.join(f.directory, 'src'));
+  await fs.rename(path.join(f.directory, 'src', 'MicrosoftGame.config'), path.join(f.directory, 'src', 'MICROSOFTGAME.CONFIG'));
+  await fs.writeFile(path.join(f.directory, `layout_${GUID}.xml`), '<Package><Chunk><FileGroup SourcePath=".\\sRc" DestinationPath="." Include="*"/><FileGroup SourcePath="." Include="*.png"/></Chunk></Package>');
+  await f.manager.complete(f.game, f.selected);
+  await f.manager.complete(f.game, f.selected);
+  expect(await f.manager.roots(f.game)).toEqual([f.directory]);
+  expect(await fs.readFile(path.join(f.directory, 'MicrosoftGame.config'), 'utf8')).toBe(childXml());
+});

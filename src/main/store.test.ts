@@ -315,3 +315,16 @@ describe('inspectGameDirectory titles containing quotes', () => {
     expect(game.title).toBe('A "quoted" Game');
   });
 });
+
+
+it.each(['IsDevOnly="false"', 'isdevonly="false"', ''])('selects a retail executable after development-only tools: %s',async(retail)=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'nexus-retail-executable-'));created.push(directory);
+  await writeFile(path.join(directory,'MicrosoftGame.config'),`<Game><ExecutableList>
+    <Executable Name="Development.exe" IsDevOnly="true"/>
+    <Executable IsDevOnly="false"/>
+    <Executable Name="Game.exe" ${retail}/>
+    <Executable Name="Other.exe"/>
+  </ExecutableList></Game>`);
+  await writeFile(path.join(directory,'Game.exe'),'MZ retail');
+  expect((await inspectGameDirectory(directory)).executable).toBe('Game.exe');
+});

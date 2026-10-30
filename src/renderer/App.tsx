@@ -584,6 +584,8 @@ export function GameLaunchToolFields({ value, change }: { value: GameLaunchTools
   return <fieldset className="game-launch-tools"><legend>{ui("ui.launch_tools_c1a69e7")}</legend>
     <label className="tool-checkbox"><input type="checkbox" checked={value.dualSenseCompatibility === true} onChange={event => update({ dualSenseCompatibility: event.target.checked })} /><span>{ui("ui.dualsense_compatibility_mode_666f577")}</span></label>
     <small>{ui("ui.try_this_if_a_standard_dualsense_controller_is_n_114e408")}</small>
+    <label className="tool-checkbox"><input type="checkbox" checked={value.dualShock4Compatibility === true} onChange={event => update({ dualShock4Compatibility: event.target.checked })} /><span>{ui("controllers.dualshock4_compatibility")}</span></label>
+    <small>{ui("controllers.dualshock4_help")}</small>
     <label className="tool-checkbox"><input type="checkbox" checked={value.mangoHud} onChange={event => update({ mangoHud: event.target.checked })} /><span>{ui("ui.enable_mangohud_dcae6c8")}</span></label>
     <label className="tool-checkbox"><input type="checkbox" checked={value.gamescope} onChange={event => update({ gamescope: event.target.checked })} /><span>{ui("ui.run_in_gamescope_58f2d35")}</span></label>
     {value.gamescope ? <label>{ui("ui.gamescope_options_cb81326")}<input value={value.gamescopeArgs} maxLength={2048} placeholder="-W 1920 -H 1080 -f" onChange={event => update({ gamescopeArgs: event.target.value })} /><small>{ui("ui.only_options_nexus_adds_the_game_command_mangohu_c4b6ad8")}</small></label> : null}

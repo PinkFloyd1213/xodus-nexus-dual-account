@@ -96,6 +96,7 @@ export interface RuntimeStatus {
 
 export interface GameLaunchTools {
   dualSenseCompatibility?: boolean;
+  dualShock4Compatibility?: boolean;
   mangoHud: boolean;
   gamescope: boolean;
   gamescopeArgs: string;

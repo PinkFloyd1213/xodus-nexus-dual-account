@@ -1103,6 +1103,15 @@ async function prepareGameLaunch(id: string): Promise<void> {
     const environment = antiCheatEnvironment(gameLocaleEnvironment(gameWindowEnvironment(gameLoggingEnvironment(protonRunner
       ? { ...process.env }
       : { ...process.env, WINEPREFIX: legacyPrefixRoot, WINEARCH: 'win64' }, verboseLogs)), locale));
+    if (process.platform === 'linux' && shortcuts.available) {
+      try {
+        const png = await loadShortcutIcon({ coverDataUrl: inspected.coverDataUrl ?? game.coverDataUrl }, bytes => {
+          const image = nativeImage.createFromBuffer(bytes);
+          return image.isEmpty() ? undefined : image.resize({ width: 256, height: 256 }).toPNG();
+        });
+        environment.WINE_APPLICATION_ID = await shortcuts.windowIdentity({ ...game, installState: inspected.installState }, png);
+      } catch { addGameLog('Game window icon unavailable.'); }
+    }
     // Never inherit another title's discovery list. Hints are scoped public
     // metadata, not licenses, and cannot make an optional lookup block Play.
     delete environment.NEXUS_RELATED_PRODUCT_IDS;

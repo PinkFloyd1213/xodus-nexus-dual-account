@@ -13,7 +13,10 @@ function fixture(){
  let market='US';const catalog={gameDetails:vi.fn(async()=>({productId:'9AAAAAAAAAAA',xboxTitleId:'123'} as {productId:string;xboxTitleId?:string}))};
  const gameActivities={select:vi.fn(),get:vi.fn(async()=>({status:'available',minutesPlayed:42}))},gameAchievements={select:vi.fn(),get:vi.fn(async()=>({status:'available',items:[]}))};
  const installedTitleId=vi.fn(async()=> '456');
- runInNewContext(code,{ipcMain:{handle:(name:string,fn:Function)=>handlers.set(name,fn)},store:{games},catalog,currentMarket:()=>market,authState,backend,gameActivities,gameAchievements,gameDetailsTarget,installedTitleId});
+ runInNewContext(code,{ipcMain:{handle:(name:string,fn:Function)=>handlers.set(name,fn)},store:{games},catalog,currentMarket:()=>market,authState,backend,
+  // Dual-account fork: single-account xboxIdentity() (the store account).
+  xboxIdentity:()=>!authState.running&&authState.stored===true&&authState.username?{account:authState.username,play:false}:undefined,
+ gameActivities,gameAchievements,gameDetailsTarget,installedTitleId});
  return {games,authState,backend,catalog,gameActivities,gameAchievements,installedTitleId,setMarket:(value:string)=>market=value,call:(name:string,...args:unknown[])=>handlers.get(name)!(undefined,...args)};
 }
 it('reads catalog details/activity/achievements without installation, file access or guessed title IDs',async()=>{

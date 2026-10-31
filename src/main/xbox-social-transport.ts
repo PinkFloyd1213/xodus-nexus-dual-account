@@ -11,7 +11,7 @@ class SocialBroker {
   private readonly queue:Job[]=[];private active?:Job;private timer?:ReturnType<typeof setTimeout>;
   dead=false;
   constructor(readonly binary:string,private readonly failure:(diagnostic:string)=>Error){
-    this.child=spawn(binary,['native-social','listen'],{env:externalLauncherEnvironment({...process.env,XODUS_LOG:'error'}),stdio:['pipe','pipe','pipe']});
+    this.child=spawn(binary,nativeSocialArgs(['listen']),{env:externalLauncherEnvironment({...process.env,XODUS_LOG:'error'}),stdio:['pipe','pipe','pipe']});
     this.child.stdin.on('error',()=>this.close());
     this.child.stderr.on('data',(bytes:Buffer)=>{this.diagnostic=(this.diagnostic+bytes.toString('utf8')).slice(-8192);});
     this.child.stdout.on('data',(bytes:Buffer)=>this.receive(bytes));
@@ -88,3 +88,10 @@ export function readSocialBroker(binary:string,args:string[],input:string|undefi
   return broker.request(args,input,signal);
 }
 export function resetSocialTransport():void{broker?.close();broker=undefined;}
+// Dual-account fork: native social speaks as the play account when one is stored.
+let roleArgs:string[]=[];
+export function setNativeSocialPlay(play:boolean):void{
+  const next=play?['--account','play']:[];
+  if(next.join()!==roleArgs.join()){roleArgs=next;resetSocialTransport();}
+}
+export function nativeSocialArgs(args:string[]):string[]{return ['native-social',...roleArgs,...args];}

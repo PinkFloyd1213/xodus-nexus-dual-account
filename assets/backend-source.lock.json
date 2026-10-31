@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "version": "0.2.13",
-  "repository": "https://github.com/xodus-gaming/xodus.git",
+  "repository": "https://github.com/PinkFloyd1213/xodus-dual-account.git",
   "commit": "53ea781dcd073e31d7ea68e894134e9c959bff04",
   "rust": "1.99.0",
   "cargoLockSha256": "2259b343e00dadc263018beb7664b12e9d58a0b73bff502ad566f5f8619ce28a",
-  "patchId": "linux-run-v73",
+  "patchId": "linux-run-v73-dual-account-1",
   "compatibility": "linux-run-v25",
   "patches": [
     {
@@ -303,6 +303,10 @@
     {
       "file": "xodus-game-activity-locale.patch",
       "sha256": "cc9e292af016b4df3cb49cfa8718bdc5b846745c38d1b3bc9615ffdbef1f6043"
+    },
+    {
+      "file": "xodus-dual-account.patch",
+      "sha256": "4221acdff05204ca25fb7f021b159509eb5616da511c44490fed0c3cb51b7ede"
     }
   ]
 }

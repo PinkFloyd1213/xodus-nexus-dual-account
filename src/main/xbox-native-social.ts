@@ -1,5 +1,5 @@
 import { spawnTracked } from './process.js';
-import {readSocialBroker,supportsSocialBroker} from './xbox-social-transport.js';
+import {nativeSocialArgs,readSocialBroker,supportsSocialBroker} from './xbox-social-transport.js';
 import type { XboxConversation, XboxFriend, XboxMessage,XboxMessageReceipt,XboxPlayerProfile,XboxPeopleList,XboxPeoplePage,XboxPerson,XboxPlayerDetails,XboxRelationship,XboxRelationshipAction,XboxProfileGame,XboxProfileGames } from '../shared/types.js';
 
 type Connection = { binary: string; account: string };
@@ -119,7 +119,7 @@ export async function readXboxSocial(binary: string, args: string[], input: stri
   signal.throwIfAborted();
   if(await supportsSocialBroker(binary)){signal.throwIfAborted();return readSocialBroker(binary,args,input,signal,socialFailure);}
   signal.throwIfAborted();
-  const task = spawnTracked(binary, ['native-social',...args], { stdoutOnly: true, maxOutput: 8_000_000, env: { ...process.env, XODUS_LOG: 'error' } });
+  const task = spawnTracked(binary, nativeSocialArgs(args), { stdoutOnly: true, maxOutput: 8_000_000, env: { ...process.env, XODUS_LOG: 'error' } });
   let diagnostic='';
   task.child.stderr.on('data',(bytes:Buffer)=>{diagnostic=(diagnostic+bytes.toString('utf8')).slice(-8192);});
   task.child.stdin.on('error', () => {});

@@ -5,6 +5,11 @@
 > or later). This folder is only for proposing it to
 > [domsvoboda/xodus-nexus](https://github.com/domsvoboda/xodus-nexus) some day.
 > Nothing has been sent.
+>
+> **Update (Nexus recipe `linux-run-v73`):** upstream fixed the main bug itself
+> (`xodus-game-activity-locale.patch`: `TitleHistory` decoration and
+> `Accept-Language`). Only the handling of a missing `MinutesPlayed` value and
+> the `NEXUS_ACTIVITY_DIAGNOSTIC_V1` lines remain specific to this fork.
 
 ## The bug (present in upstream Nexus)
 

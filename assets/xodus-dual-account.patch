@@ -56,7 +56,7 @@ index 0000000000000000000000000000000000000000..4b7c5d73d95e0a7521ad656d7b8a164b
 +    ExitCode::SUCCESS
 +}
 diff --git a/crates/xodus-cli/src/commands/game_activity.rs b/crates/xodus-cli/src/commands/game_activity.rs
-index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df8519f6d86d 100644
+index 3881524e92ecba66625a8cef235ec3ab62940ba9..7d7060117701dbe5a8e19418739df54f18303dd9 100644
 --- a/crates/xodus-cli/src/commands/game_activity.rs
 +++ b/crates/xodus-cli/src/commands/game_activity.rs
 @@ -24,7 +24,9 @@ fn minutes(value: &Value, xuid: &str, title_id: u32) -> Result<Option<f64>, &'st
@@ -70,8 +70,8 @@ index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df85
                  if raw.is_empty() || raw.len() > 32 || !raw.bytes().all(|c| c.is_ascii_digit() || c == b'.') { return Err("stats-value"); }
                  let n = raw.parse::<f64>().map_err(|_| "stats-value")?;
                  if !n.is_finite() || !(0.0..=1_000_000_000.0).contains(&n) { return Err("stats-range"); }
-@@ -58,6 +60,11 @@ fn last_played(value: &Value, xuid: &str, title_id: u32) -> Result<Option<String
-     Ok(date.filter(|s| (20..=40).contains(&s.len()) && s.is_ascii() && !s.chars().any(char::is_control)).map(str::to_owned))
+@@ -65,6 +67,11 @@ fn history_request(client: &reqwest::Client, authorization: &str, xuid: &str, ti
+         .header("Accept-Language", "en-US")
  }
  
 +/// Static stage + HTTP status only (0 when unknown), never a response or account.
@@ -82,7 +82,7 @@ index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df85
  async fn lookup(tokens: &TokenManager, title_id: u32) -> Result<Value, &'static str> {
      let (client, authorization, account) = xbox_session(tokens).await?;
      let response = client.get("https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag")
-@@ -71,18 +78,27 @@ async fn lookup(tokens: &TokenManager, title_id: u32) -> Result<Value, &'static
+@@ -78,17 +85,23 @@ async fn lookup(tokens: &TokenManager, title_id: u32) -> Result<Value, &'static
      let stats = async {
          let response = client.post("https://userstats.xboxlive.com/batch")
              .header("Authorization", &authorization).header("x-xbl-contract-version", "2")
@@ -96,15 +96,10 @@ index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df85
 +        minutes(&value, &xuid, title_id).map_err(|stage| (stage, status))
      };
      let history = async {
--        let response = client.get(format!("https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleid({title_id})/decoration/detail"))
-+        // Only the titlehistory decoration fills titleHistory; detail leaves it null.
-+        let response = client.get(format!("https://titlehub.xboxlive.com/users/xuid({xuid})/titles/titleid({title_id})/decoration/titlehistory"))
-             .header("Authorization", &authorization).header("x-xbl-contract-version", "2")
+         let response = history_request(&client, &authorization, &xuid, title_id)
 -            .send().await.map_err(|_| "title-request")?;
 -        let bytes = bounded(response, 256 * 1024).await?;
 -        last_played(&serde_json::from_slice(&bytes).map_err(|_| "title-json")?, &xuid, title_id)
-+            // Titlehub answers 400 Bad Request without a language.
-+            .header("Accept-Language", "en-US")
 +            .send().await.map_err(|_| ("request", 0))?;
 +        let status = response.status().as_u16();
 +        let bytes = bounded(response, 256 * 1024).await.map_err(|stage| (stage, status))?;
@@ -117,7 +112,7 @@ index 2888103a41836cb75e7b8a63b507346705290c02..6676a78c511c186399b26e35b984df85
      // One unavailable statistic must not hide the other. Do not invent zero.
      let (played_ok, history_ok) = (played.is_ok(), history.is_ok());
      if !played_ok && !history_ok { return Err("activity-unavailable"); }
-@@ -116,6 +132,14 @@ mod tests {
+@@ -122,6 +135,14 @@ mod tests {
          assert_eq!(minutes(&grouped, "123", 42).unwrap(), Some(2052.0));
      }
      #[test]

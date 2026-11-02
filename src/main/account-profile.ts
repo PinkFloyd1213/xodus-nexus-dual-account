@@ -6,13 +6,13 @@ import { parseSubscription } from '../shared/subscription.js';
 import type { GamePassSubscription } from '../shared/types.js';
 
 export interface XboxProfile { gamertag: string; avatarDataUrl?: string; subscription?: GamePassSubscription }
-type Reader = (binary: string, signal: AbortSignal) => Promise<string>;
+type Reader = (binary: string, signal: AbortSignal, play: boolean) => Promise<string>;
 const name = (value: unknown): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= 128 && !/[\x00-\x1f\x7f]/.test(value);
 const image = (value: unknown): value is string => typeof value === 'string' && value.length < 3_000_000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
 
-async function readProfile(binary: string, signal: AbortSignal): Promise<string> {
+async function readProfile(binary: string, signal: AbortSignal, play: boolean): Promise<string> {
   signal.throwIfAborted();
-  const tracked = spawnTracked(binary, ['profile', '--json'], { maxOutput: 4_000_000, stdoutOnly: true });
+  const tracked = spawnTracked(binary, ['profile', '--json', ...(play ? ['--account', 'play'] : [])], { maxOutput: 4_000_000, stdoutOnly: true });
   const stop = () => { tracked.child.kill('SIGKILL'); };
   signal.addEventListener('abort', stop, { once: true });
   if (signal.aborted) stop();
@@ -30,6 +30,7 @@ export class AccountProfile {
   value?: XboxProfile;
   private account?: string;
   private binary?: string;
+  private play = false;
   private generation = 0;
   private controller?: AbortController;
   private refreshedAt = 0;
@@ -37,8 +38,8 @@ export class AccountProfile {
   private disk: Promise<void> = Promise.resolve();
   private readonly file: string;
   constructor(userData: string, private changed: () => void,
-    private normalize: (dataUrl: string) => string | undefined, private reader: Reader = readProfile) {
-    this.file = path.join(userData, 'xbox-profile.json');
+    private normalize: (dataUrl: string) => string | undefined, private reader: Reader = readProfile, fileName = 'xbox-profile.json') {
+    this.file = path.join(userData, fileName);
   }
   cancel(): void { this.generation++; this.controller?.abort(); this.controller = undefined; }
   async settled(): Promise<void> { await this.job; await this.disk; }
@@ -47,14 +48,16 @@ export class AccountProfile {
     this.disk = this.disk.catch(() => {}).then(action).catch(() => { /* Optional private cache. */ });
     return this.disk;
   }
-  async select(account: string | undefined, binary?: string, force = false): Promise<void> {
+  async select(account: string | undefined, binary?: string, force = false, play = false): Promise<void> {
     const switched = account !== this.account;
-    const backendChanged = binary !== this.binary;
+    // The in-game (play) account reads through a different CLI role.
+    const backendChanged = binary !== this.binary || play !== this.play;
     // Repeated Refresh clicks must share an existing request. Aborting it can
     // interrupt device renewal and disguises a UI cancellation as a backend crash.
     if (switched || backendChanged || !account) this.cancel();
     this.account = account;
     this.binary = binary;
+    this.play = play;
     if (backendChanged) this.refreshedAt = 0;
     const generation = this.generation;
     if (!account) {
@@ -82,7 +85,7 @@ export class AccountProfile {
     const controller = new AbortController(); this.controller = controller;
     this.job = (async () => {
       try {
-        const output = await this.reader(binary, controller.signal);
+        const output = await this.reader(binary, controller.signal, play);
         if (output.length > 4_000_000) throw Error('Profile too large');
         const line = output.split('\n').reverse().find(line => line.trimStart().startsWith('{'));
         const result = JSON.parse(line ?? '');

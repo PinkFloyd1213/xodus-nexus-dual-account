@@ -20,10 +20,10 @@ export async function installedTitleId(directory: string): Promise<string | unde
   } finally { await handle.close(); }
 }
 
-type Reader = (binary: string, titleId: string, signal: AbortSignal) => Promise<string>;
-async function read(binary: string, titleId: string, signal: AbortSignal): Promise<string> {
+type Reader = (binary: string, titleId: string, signal: AbortSignal, play: boolean) => Promise<string>;
+async function read(binary: string, titleId: string, signal: AbortSignal, play: boolean): Promise<string> {
   signal.throwIfAborted();
-  const tracked = spawnTracked(binary, ['game-activity', titleId, '--json'], { maxOutput: 64_000, stdoutOnly: true });
+  const tracked = spawnTracked(binary, ['game-activity', titleId, '--json', ...(play ? ['--account', 'play'] : [])], { maxOutput: 64_000, stdoutOnly: true });
   tracked.child.stdin.end();
   const stop = () => { tracked.child.kill('SIGKILL'); };
   signal.addEventListener('abort', stop, { once: true });
@@ -50,13 +50,13 @@ export function parseGameActivity(raw: string, account: string, titleId: string)
 
 /** Account-bound, bounded in-memory cache only. Tokens and raw responses stay in CLI. */
 export class GameActivities {
-  private identity?: { account: string; binary: string };
+  private identity?: { account: string; binary: string; play: boolean };
   private generation = 0;
   private requests = new Map<string, { controller: AbortController; job: Promise<GameActivity> }>();
   private cache = new Map<string, { until: number; activity: GameActivity }>();
   constructor(private reader: Reader = read) {}
-  select(account?: string, binary?: string): void {
-    const next = account && binary ? { account, binary } : undefined;
+  select(account?: string, binary?: string, play = false): void {
+    const next = account && binary ? { account, binary, play } : undefined;
     if (JSON.stringify(next) === JSON.stringify(this.identity)) return;
     this.generation++;
     for (const request of this.requests.values()) request.controller.abort();
@@ -73,7 +73,7 @@ export class GameActivities {
     const controller = new AbortController();
     const job = (async () => {
       try {
-        const raw = await this.reader(identity.binary, titleId, controller.signal);
+        const raw = await this.reader(identity.binary, titleId, controller.signal, identity.play);
         if (generation !== this.generation || controller.signal.aborted) throw Error('Account changed.');
         const activity = parseGameActivity(raw, identity.account, titleId);
         if (this.cache.size >= 100) this.cache.delete(this.cache.keys().next().value!);

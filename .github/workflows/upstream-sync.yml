@@ -1,0 +1,60 @@
+# Daily: keep main equal to domsvoboda/xodus-nexus and propose its changes as a
+# pull request from upstream-sync into dual-account. Never merges.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Sync main with upstream and open the PR
+        env:
+          # A fine-grained token with Workflows write is needed when upstream
+          # edits .github/workflows; GITHUB_TOKEN works otherwise.
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+          # SYNC_TOKEN has no Actions permission: dispatch with GITHUB_TOKEN.
+          DISPATCH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh api -X POST "repos/$REPO/merge-upstream" -f branch=main > /dev/null; then
+            echo "::error::main could not be synced with upstream (add a SYNC_TOKEN secret if upstream changed workflows)."
+            exit 1
+          fi
+          ahead=$(gh api "repos/$REPO/compare/dual-account...main" --jq .ahead_by)
+          echo "main is $ahead commit(s) ahead of dual-account"
+          [ "$ahead" -gt 0 ] || exit 0
+          # Fixes (by Claude or by hand) go to upstream-sync, never to main.
+          pr=$(gh pr list -R "$REPO" --head upstream-sync --base dual-account --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            echo "PR #$pr is still open; merge main into upstream-sync to pick up newer upstream commits."
+          else
+            sha=$(gh api "repos/$REPO/commits/main" --jq .sha)
+            gh api -X PATCH "repos/$REPO/git/refs/heads/upstream-sync" -f sha="$sha" -F force=true > /dev/null 2>&1 \
+              || gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/upstream-sync -f sha="$sha" > /dev/null
+            url=$(gh pr create -R "$REPO" --head upstream-sync --base dual-account \
+              --title "Sync upstream Nexus (${sha:0:7})" \
+              --body "Automatic sync from domsvoboda/xodus-nexus. Checks and the Claude review run on this PR. If the backend lock changed, xodus-dual-account.patch must be rebased onto the new base (see docs/DUAL_ACCOUNT.md). Merge manually.")
+            pr=${url##*/}
+            created=1
+          fi
+          # A PR with conflicts (or opened with GITHUB_TOKEN) starts no PR workflows:
+          # always start the Claude review, which merges and pushes; checks follow its push.
+          if [ "${created:-0}" = 1 ]; then
+            GH_TOKEN=$DISPATCH_TOKEN gh workflow run claude-pr.yml -R "$REPO" --ref dual-account -f pr="$pr"
+            [ "$HAS_SYNC_TOKEN" = "true" ] || GH_TOKEN=$DISPATCH_TOKEN gh workflow run dual-account-checks.yml -R "$REPO" --ref dual-account -f pr="$pr"
+          fi

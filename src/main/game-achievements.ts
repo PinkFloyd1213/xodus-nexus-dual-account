@@ -35,10 +35,10 @@ export function parseGameAchievements(raw: string, account: string, titleId: str
   return { status: items.length || value.partial ? 'available' : 'unavailable', items, partial: value.partial };
 }
 
-type Reader = (binary: string, titleId: string, signal: AbortSignal) => Promise<string>;
-async function read(binary: string, titleId: string, signal: AbortSignal): Promise<string> {
+type Reader = (binary: string, titleId: string, signal: AbortSignal, play: boolean) => Promise<string>;
+async function read(binary: string, titleId: string, signal: AbortSignal, play: boolean): Promise<string> {
   signal.throwIfAborted();
-  const tracked = spawnTracked(binary, ['achievements', titleId, '--json'], { maxOutput: MAX_BYTES, stdoutOnly: true });
+  const tracked = spawnTracked(binary, ['achievements', titleId, '--json', ...(play ? ['--account', 'play'] : [])], { maxOutput: MAX_BYTES, stdoutOnly: true });
   tracked.child.stdin.end();
   const stop = () => { tracked.child.kill('SIGKILL'); };
   signal.addEventListener('abort', stop, { once: true });
@@ -53,13 +53,13 @@ async function read(binary: string, titleId: string, signal: AbortSignal): Promi
 
 /** No disk cache, telemetry, unlock writes or cross-account responses. */
 export class GameAchievementsReader {
-  private identity?: { account: string; binary: string };
+  private identity?: { account: string; binary: string; play: boolean };
   private generation = 0;
   private requests = new Map<string, { controller: AbortController; job: Promise<GameAchievements> }>();
   private cache = new Map<string, { until: number; value: GameAchievements }>();
   constructor(private reader: Reader = read) {}
-  select(account?: string, binary?: string) {
-    const next = account && binary ? { account, binary } : undefined;
+  select(account?: string, binary?: string, play = false) {
+    const next = account && binary ? { account, binary, play } : undefined;
     if (JSON.stringify(next) === JSON.stringify(this.identity)) return;
     this.generation++;
     for (const request of this.requests.values()) request.controller.abort();
@@ -76,7 +76,7 @@ export class GameAchievementsReader {
     const controller = new AbortController();
     const job = Promise.resolve().then(async (): Promise<GameAchievements> => {
       try {
-        const raw = await this.reader(identity.binary, titleId, controller.signal);
+        const raw = await this.reader(identity.binary, titleId, controller.signal, identity.play);
         if (generation !== this.generation || controller.signal.aborted) throw Error('Account changed.');
         const value = parseGameAchievements(raw, identity.account, titleId);
         if (this.cache.size >= 32) this.cache.delete(this.cache.keys().next().value!);

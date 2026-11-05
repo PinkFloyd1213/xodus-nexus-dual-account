@@ -17,9 +17,10 @@ exact copy of upstream.
 | `dual-account-release.yml` | launcher | push to `dual-account` (except docs) | tests, AppImage, release `v<version>-dual.<n>`; the in-app updater offers it |
 | `dual-account-checks.yml` | launcher | PR into `dual-account` | launcher tests; full backend recipe (clone, 39 patches, build, tests) |
 | `upstream-sync.yml` | launcher | daily at 05:17 UTC, or by hand | keeps `main` equal to domsvoboda, then opens an `upstream-sync` → `dual-account` PR when there is something new |
-| `claude-pr.yml` | launcher | every PR into `dual-account` (including sync PRs) | Claude reviews, merges `dual-account` if needed, rebases the backend patch when the lock changed, fixes tests, pushes to the PR branch and summarizes. **Never merges.** |
+| `claude-pr.yml` | launcher | every PR into `dual-account` (including sync PRs) | Claude reviews, merges `dual-account` if needed, rebases the backend patch when the lock changed, fixes tests, pushes to the PR branch, summarizes and sets `claude/verdict` (green only when nothing is doubtful or left for a human). Never merges itself. |
 | `claude-mention.yml` | launcher | an `@claude …` comment by the owner | Claude does what was asked on the PR or issue |
 | `claude-fix.yml` | both | a check fails on a same-repo PR into `dual-account` | network or runner hiccup: reruns the failed jobs once. Otherwise Claude reads the failed log, fixes the branch, pushes (the checks run again) and comments. At most 4 fixes per PR, then it hands over. **Never merges.** |
+| `auto-merge.yml` | both | after checks or Claude finish, and hourly | merges the open sync PR (`upstream-sync`, `nexus-sync`) with a merge commit and deletes its branch, only when every check on its head commit is green and the `claude/verdict` status says Claude is sure. Otherwise the PR waits for the owner |
 | `upstream-mirror.yml` | backend | daily at 05:07 UTC | keeps `main` equal to xodus-gaming/xodus so the commit pinned by the lock stays fetchable |
 | `nexus-sync.yml` | backend | daily at 05:27 UTC, or by hand | when upstream Nexus changes its backend recipe, adds it as one commit on `nexus-base` and opens a `nexus-sync` → `dual-account` PR |
 | `claude-pr.yml`, `claude-mention.yml` | backend | PRs into `dual-account`, `@claude` by the owner | same agent, Rust side: merges, routes new account uses to store/play, builds and tests |
@@ -91,15 +92,19 @@ the token fixes it. With it, sync PRs also start CI by themselves.
   later, and the launcher offers it in Settings → Check for updates.
 - **Upstream moves:** a "Sync upstream Nexus" PR appears, checks and Claude run
   on it, and Claude posts a summary. If a check fails, `claude-fix.yml` reruns
-  it or fixes it and comments. Merge when it is green and the summary looks
-  right; the merge triggers a new release.
+  it or fixes it and comments. When everything is green and Claude is sure,
+  `auto-merge.yml` merges it and a new release follows. A red `claude/verdict`
+  means Claude has a doubt or could not fix something: read its comment, fix
+  or merge by hand.
 - **The backend changes** (patch or lock): after updating the AppImage, click
   "Update dual-account backend" in Settings.
 
 ## Safeguards
 
-- Claude cannot merge or force-push; it may only read PRs and run logs with
-  `gh`, and its commands are limited to a fixed allowlist in the workflow.
+- Claude itself cannot merge or force-push; only `auto-merge.yml` merges, and
+  only the sync PRs with all checks green and a green `claude/verdict`.
+  Claude may only read PRs and run logs with `gh`, and its commands are
+  limited to a fixed allowlist in the workflow.
 - PRs from other forks receive no secrets and Claude does not run on them.
   `@claude` only answers the owner (`OWNER`).
 - Protect `dual-account` to require PRs if wanted: Settings → Branches →

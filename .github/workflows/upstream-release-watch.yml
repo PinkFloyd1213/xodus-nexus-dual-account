@@ -1,0 +1,91 @@
+# Daily: once upstream Nexus publishes 0.5.0 or later (the release with its own
+# Store / player accounts), Claude compares it with this fork and opens one
+# issue with the verdict: switch back to upstream, or keep the fork.
+name: Upstream release watch
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    steps:
+      - name: Look for a new upstream release
+        id: release
+        run: |
+          set -euo pipefail
+          # The API follows the coming rename of domsvoboda/xodus-nexus to nexus-launcher.
+          tag=$(gh api repos/domsvoboda/xodus-nexus/releases/latest --jq .tag_name)
+          echo "Latest upstream release: $tag"
+          [ "$(printf '%s\nv0.5.0\n' "$tag" | sort -V | head -n1)" = v0.5.0 ] || { echo "Not 0.5.0 yet."; exit 0; }
+          if [ "$(gh repo view "$GITHUB_REPOSITORY" --json hasIssuesEnabled --jq .hasIssuesEnabled)" != true ]; then
+            echo "::error::Upstream $tag is out, but issues are disabled here: enable them (gh repo edit --enable-issues)."; exit 1
+          fi
+          if gh issue list -R "$GITHUB_REPOSITORY" --state all --search "in:title \"Upstream Nexus $tag\"" --json number --jq '.[0].number' | grep -q .; then
+            echo "Already compared."; exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.tag
+        with:
+          ref: dual-account
+      - name: Fetch upstream sources
+        if: steps.release.outputs.tag
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --branch "$TAG" https://github.com/domsvoboda/xodus-nexus.git /tmp/upstream-launcher
+          read -r repo commit < <(node -p 'const l=require("/tmp/upstream-launcher/assets/backend-source.lock.json"); l.repository+" "+l.commit')
+          git clone -q "$repo" /tmp/upstream-backend && git -C /tmp/upstream-backend checkout -q --detach "$commit"
+          git clone -q --branch dual-account https://github.com/PinkFloyd1213/xodus-dual-account.git /tmp/fork-backend
+      - uses: anthropics/claude-code-action@v1
+        if: steps.release.outputs.tag && env.HAS_CLAUDE_TOKEN == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Upstream Xodus Nexus ${{ steps.release.outputs.tag }} is out and ships its own separate Store
+            (license) and Xbox player accounts. The owner wants to know whether to switch back to upstream
+            or keep this "dual-account" fork. Read only; change no file outside /tmp.
+
+            Sources: this fork's launcher in the working directory (docs/DUAL_ACCOUNT.md first), this fork's
+            backend in /tmp/fork-backend (docs/dual-account.md first), upstream's launcher in
+            /tmp/upstream-launcher, upstream's backend in /tmp/upstream-backend.
+
+            Compare, feature by feature, which account each side uses: what the game sees (XUser,
+            MsaTokenRequest, game XSTS, PlayFab), cloud saves, achievements, game activity and presence,
+            friends, chat and native social, library, catalog, entitlements, downloads, updates, Store
+            tickets and licenses, offline launch. Also: behaviour with no second account, where secrets
+            are stored (system keyring, no plain files), sign-in and sign-out of each account, the Settings
+            UI, and what upstream adds (saved Store accounts, per-game license account). Check this fork's
+            extras such as docs/upstream/ACTIVITY_FIX.md. Cite files for each claim.
+
+            Write the report in French to /tmp/compare.md: a table (feature, fork, upstream, verdict),
+            what the owner would lose and gain by switching, the steps to switch back (re-sign the player
+            account once, keep or remove the fork), and a clear recommendation. Never print tokens or
+            account data.
+          claude_args: >-
+            --max-turns 60
+            --allowedTools "Read,Glob,Grep,Write,Bash(ls *),Bash(cat *),Bash(grep *),Bash(find *),Bash(head *),Bash(tail *),Bash(sed -n *),Bash(wc *),Bash(diff *),Bash(git -C /tmp/* log *),Bash(git -C /tmp/* show *),Bash(git -C /tmp/* diff *),Bash(git log *),Bash(cd *)"
+      - name: Open the issue
+        if: steps.release.outputs.tag
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          {
+            echo "Upstream Nexus [$TAG](https://github.com/domsvoboda/xodus-nexus/releases/tag/$TAG) est sorti, avec ses propres comptes Store et joueur."
+            echo
+            if [ -s /tmp/compare.md ]; then cat /tmp/compare.md; else echo "Claude n'a pas pu écrire la comparaison ([run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))."; fi
+          } > /tmp/issue.md
+          gh issue create -R "$GITHUB_REPOSITORY" --title "Upstream Nexus $TAG : comparaison avec le double compte" --body-file /tmp/issue.md

@@ -21,6 +21,7 @@ exact copy of upstream.
 | `claude-mention.yml` | launcher | an `@claude …` comment by the owner | Claude does what was asked on the PR or issue |
 | `claude-fix.yml` | both | a check fails on a same-repo PR into `dual-account` | network or runner hiccup: reruns the failed jobs once. Otherwise Claude reads the failed log, fixes the branch, pushes (the checks run again) and comments. At most 4 fixes per PR, then it hands over. **Never merges.** |
 | `auto-merge.yml` | both | after checks or Claude finish, and hourly | merges the open sync PR (`upstream-sync`, `nexus-sync`) with a merge commit and deletes its branch, only when every check on its head commit is green and the `claude/verdict` status says Claude is sure. Otherwise the PR waits for the owner |
+| `upstream-release-watch.yml` | launcher | daily at 06:23 UTC, or by hand | once upstream publishes 0.5.0 or later (its own Store / player accounts), Claude compares it with this fork and opens one issue: switch back or keep the fork. Needs issues enabled |
 | `upstream-mirror.yml` | backend | daily at 05:07 UTC | keeps `main` equal to xodus-gaming/xodus so the commit pinned by the lock stays fetchable |
 | `nexus-sync.yml` | backend | daily at 05:27 UTC, or by hand | when upstream Nexus changes its backend recipe, adds it as one commit on `nexus-base` and opens a `nexus-sync` → `dual-account` PR |
 | `claude-pr.yml`, `claude-mention.yml` | backend | PRs into `dual-account`, `@claude` by the owner | same agent, Rust side: merges, routes new account uses to store/play, builds and tests |

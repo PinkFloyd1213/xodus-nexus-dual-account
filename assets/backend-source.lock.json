@@ -5,7 +5,7 @@
   "commit": "53ea781dcd073e31d7ea68e894134e9c959bff04",
   "rust": "1.99.0",
   "cargoLockSha256": "2259b343e00dadc263018beb7664b12e9d58a0b73bff502ad566f5f8619ce28a",
-  "patchId": "linux-run-v75-dual-account-1",
+  "patchId": "linux-run-v75-dual-account-2",
   "compatibility": "linux-run-v25",
   "patches": [
     {
@@ -314,7 +314,7 @@
     },
     {
       "file": "xodus-dual-account.patch",
-      "sha256": "3c1c24f36a37e415191ce9a1e74904afc758a4afdb345dc498da4df93345c4ab"
+      "sha256": "4bc0774a14b3a763635ce537963925747b0c515d9845a76b50ea458d2b90f478"
     }
   ]
 }

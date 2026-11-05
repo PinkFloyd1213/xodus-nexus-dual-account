@@ -28,7 +28,7 @@ Browse the Store, install games you own or can access through a subscription,
 and play with one shared runtime. Xbox sign-in and cloud saves are available
 for supported games.
 
-![Xodus Nexus demo](docs/screenshots/demo.gif?v=bb1bc859)
+![Xodus Nexus demo](docs/screenshots/demo.gif?v=dc773ded)
 
 *Preview with sample account data.*
 
@@ -181,7 +181,9 @@ but have not been verified and may encounter compatibility issues.
 | Forza Horizon 6 | Yes | Playable online; some setups need [VC++ prerequisites](https://github.com/domsvoboda/xodus-nexus/issues/96). [Loading failures](https://github.com/domsvoboda/xodus-nexus/issues/13) also reported. |
 | Palworld | Yes | Playable online. |
 | DOOM Eternal | Yes | Playable. |
-| Microsoft Flight Simulator 2024 | Partial | Unreleased runtime: gameplay works, but sign-in can stall. Multiplayer unverified. |
+| Microsoft Flight Simulator 2024 | Partial | Unreleased runtime: sign-in and main menu verified. Multiplayer unverified. |
+| Microsoft Flight Simulator (2020) | Startup verified | Unreleased runtime: reaches Installation Manager. Content download and flights unverified. |
+| SnowRunner | Yes | Unreleased runtime: works. Multiplayer and DLC unverified. |
 | Ori and the Will of the Wisps | Partial | Unreleased Experimental runtime: sign-in and main menu work; gameplay unverified. |
 | Like a Dragon: Infinite Wealth | Partial | Unreleased Experimental runtime: main menu works; gameplay unverified. |
 | DOOM: The Dark Ages | Yes | Playable (user report). |
@@ -248,6 +250,8 @@ not confirm gameplay or online support.
 
 [Library](docs/screenshots/demo-library.png) ·
 [Store](docs/screenshots/demo-store.png) ·
+[Social](docs/screenshots/demo-social.png) ·
+[Chat](docs/screenshots/demo-chat.png) ·
 [Install queue](docs/screenshots/demo-downloads.png) ·
 [Settings](docs/screenshots/demo-settings.png)
 

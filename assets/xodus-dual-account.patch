@@ -283,7 +283,7 @@ index 8816af7910f165e927b6d2c07593c11cd52bb27d..34477d2f9b0fb1a9c8e863f646fb4fd1
          }
      };
 diff --git a/crates/xodus-cli/src/commands/run.rs b/crates/xodus-cli/src/commands/run.rs
-index b5957bc9be4cf136f363ec4a4afe5bde7c31764d..9fbb721e52d45ae83e6eca4db46f2c953c2331ad 100644
+index cf29c56a745efee672f628b317c6f0e9de3fd30f..e23c7b9545f964c615caa76299681298d61bfd3e 100644
 --- a/crates/xodus-cli/src/commands/run.rs
 +++ b/crates/xodus-cli/src/commands/run.rs
 @@ -18,13 +18,16 @@ use tempfile::{tempdir, tempfile, tempfile_in};

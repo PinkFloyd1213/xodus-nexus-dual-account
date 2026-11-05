@@ -81,7 +81,8 @@ describe('previous backend restore', () => {
       expect(manager.current.updating).toBe(false);
       expect(manager.current.binaryPath).toBe(cli);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
-  });
+    // refresh() probes every backend command; a loaded CI runner needs more than 5 s.
+  }, 30_000);
 });
 
 describe('license account profile', () => {

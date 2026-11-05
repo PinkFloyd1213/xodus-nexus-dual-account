@@ -19,6 +19,7 @@ exact copy of upstream.
 | `upstream-sync.yml` | launcher | daily at 05:17 UTC, or by hand | keeps `main` equal to domsvoboda, then opens an `upstream-sync` → `dual-account` PR when there is something new |
 | `claude-pr.yml` | launcher | every PR into `dual-account` (including sync PRs) | Claude reviews, merges `dual-account` if needed, rebases the backend patch when the lock changed, fixes tests, pushes to the PR branch and summarizes. **Never merges.** |
 | `claude-mention.yml` | launcher | an `@claude …` comment by the owner | Claude does what was asked on the PR or issue |
+| `claude-fix.yml` | both | a check fails on a same-repo PR into `dual-account` | network or runner hiccup: reruns the failed jobs once. Otherwise Claude reads the failed log, fixes the branch, pushes (the checks run again) and comments. At most 4 fixes per PR, then it hands over. **Never merges.** |
 | `upstream-mirror.yml` | backend | daily at 05:07 UTC | keeps `main` equal to xodus-gaming/xodus so the commit pinned by the lock stays fetchable |
 | `nexus-sync.yml` | backend | daily at 05:27 UTC, or by hand | when upstream Nexus changes its backend recipe, adds it as one commit on `nexus-base` and opens a `nexus-sync` → `dual-account` PR |
 | `claude-pr.yml`, `claude-mention.yml` | backend | PRs into `dual-account`, `@claude` by the owner | same agent, Rust side: merges, routes new account uses to store/play, builds and tests |
@@ -89,15 +90,16 @@ the token fixes it. With it, sync PRs also start CI by themselves.
 - **Code changes:** push to `dual-account`. A release appears about 10 minutes
   later, and the launcher offers it in Settings → Check for updates.
 - **Upstream moves:** a "Sync upstream Nexus" PR appears, checks and Claude run
-  on it, and Claude posts a summary. Merge when it is green and the summary
-  looks right; the merge triggers a new release.
+  on it, and Claude posts a summary. If a check fails, `claude-fix.yml` reruns
+  it or fixes it and comments. Merge when it is green and the summary looks
+  right; the merge triggers a new release.
 - **The backend changes** (patch or lock): after updating the AppImage, click
   "Update dual-account backend" in Settings.
 
 ## Safeguards
 
-- Claude cannot merge, force-push or use `gh`; its commands are limited to a
-  fixed allowlist in the workflow.
+- Claude cannot merge or force-push; it may only read PRs and run logs with
+  `gh`, and its commands are limited to a fixed allowlist in the workflow.
 - PRs from other forks receive no secrets and Claude does not run on them.
   `@claude` only answers the owner (`OWNER`).
 - Protect `dual-account` to require PRs if wanted: Settings → Branches →
